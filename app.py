@@ -12,12 +12,7 @@ st.caption("Industrial-Scale Async Processing (Auto-filtering Banks & PSUs | Dai
 # 1. LIVE DYNAMIC TOP 1000 TICKER HARVESTER
 @st.cache_data(ttl=86400) # Updates dynamically exactly once a day
 def harvest_top_1000_nse_tickers():
-    """
-    Combines core high-volume indices (Nifty Total Market + MidSmall 400 + Nifty 500)
-    to establish a fluid pool of the top 1000 tradeable non-microcap assets on the NSE.
-    """
     base_pool = set()
-    # High reliability open-source historical indexes mirrors mapping the top market-cap equities
     urls = [
         "https://githubusercontent.com",
         "https://githubusercontent.com",
@@ -33,26 +28,19 @@ def harvest_top_1000_nse_tickers():
         except Exception:
             continue
             
-    # Fail-safe backup array if corporate cloud filters drop GitHub access
     if len(base_pool) < 50:
         fallback = ["DIXON", "SUZLON", "TATAPOWER", "MAZDOCK", "COCHINSHIP", "KPITTECH", "TATAELXSI", "RELIANCE", "TCS", "INFY"]
         return [f"{t}.NS" for t in fallback]
         
-    # Standardize names to Yahoo Finance tracking requirements 
     formatted_tickers = [f"{symbol}.NS" for symbol in base_pool if symbol and not symbol.replace('.','').isdigit()]
     return sorted(list(set(formatted_tickers)))[:1000]
 
 # 2. ASYNC METRIC CRUNCHER WITH ANTI-BAN CIRCUIT BREAKERS
 def process_single_ticker_safe(ticker):
-    """
-    Safely dissects metrics for one asset. Uses a micro-cooldown timer to protect 
-    the engine from getting blacklisted or causing network structural drops.
-    """
     GOVERNANCE_WARNING_TERMS = ["sebi fine", "fraud", "scam", "pledge invocation", "auditor resigns", "investigation", "raid"]
     
     try:
-        # Prevent rapid-fire anti-bot triggers by injecting a short structural pause
-        time.sleep(0.15) 
+        time.sleep(0.15) # Safe micro-cooldown delay to prevent IP bans
         
         stock = yf.Ticker(ticker)
         info = stock.info
@@ -84,7 +72,6 @@ def process_single_ticker_safe(ticker):
         if pe_ratio == 0 or not current_price:
             return None
             
-        # Segment limits
         industry_pe_limit = 65.0 if sector in ["Technology", "Healthcare", "Industrials"] else 45.0
         industry_debt_limit = 1.6 if sector == "Industrials" else 1.1
         
@@ -105,10 +92,11 @@ def process_single_ticker_safe(ticker):
                 headline_lower = detected_headline.lower()
                 
                 for article in news_feed[:3]:
-                    h_low = (article.get('title') or article.get('headline') or "").lower()
-                    if any(term in h_low for term in GOVERNANCE_WARNING_TERMS):
-                        has_negative_governance = True
-                        break
+                    if isinstance(article, dict):
+                        h_low = (article.get('title') or article.get('headline') or "").lower()
+                        if any(term in h_low for term in GOVERNANCE_WARNING_TERMS):
+                            has_negative_governance = True
+                            break
                 
                 if any(w in headline_lower for w in ["ai", "semiconductor", "order", "contract", "win", "secured"]):
                     catalyst_match = f"🚀 Backlog Expansion: '{detected_headline}'."
@@ -120,6 +108,7 @@ def process_single_ticker_safe(ticker):
                     catalyst_match = f"📈 Earnings Acceleration: '{detected_headline}'."
                     catalyst_multiplier = 1.25
 
+        # Fallback tracking models if news array returns empty
         if not catalyst_match:
             if debt_to_equity < 0.15:
                 catalyst_match = f"🛡️ Balanced Moat: Unleveraged structural operations at {roe_pct:.1f}% ROE."
@@ -146,19 +135,16 @@ def process_single_ticker_safe(ticker):
             "Expected Percentage Gain": f"{expected_gain_pct:.1f}%"
         }
     except Exception:
-        # Gracefully handle dropped records or random API disconnects without stalling the full engine
         return None
 
 # 3. STREAMLIT APP CORE EXECUTIVE CONTROL FLOW
-@st.cache_data(ttl=86400) # Caches final screened matrices for 24 hours to prevent reload overheads
+@st.cache_data(ttl=86400)
 def run_heavy_pipeline(tickers_list):
     results = []
-    # Using 3 workers avoids triggering rate limits on Yahoo's network layout
-    max_concurrent_workers = 3 
+    max_concurrent_workers = 3 # Kept low intentionally to avoid IP bans
     
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
     total_tickers = len(tickers_list)
     
     with ThreadPoolExecutor(max_workers=max_concurrent_workers) as executor:
@@ -173,10 +159,9 @@ def run_heavy_pipeline(tickers_list):
             except Exception:
                 pass
             
-            # Real-time UI progress tracking updates
             percent_complete = int(((idx + 1) / total_tickers) * 100)
             progress_bar.progress(percent_complete)
-            status_text.text(f"⏳ Evaluated [{idx+1}/{total_tickers}] tickers. Scaled asset pool: {ticker_name}")
+            status_text.text(f"⏳ Evaluated [{idx+1}/{total_tickers}] tickers. Processing: {ticker_name}")
             
     progress_bar.empty()
     status_text.empty()
@@ -192,7 +177,6 @@ if st.sidebar.button("Force Clear Cache & Re-run"):
 
 st.info(f"⚡ Processing engine actively initialized for {len(raw_target_pool)} high-liquidity targets. Running deep filters...")
 
-# Runs the cached analysis matrix pipeline
 compiled_opportunities = run_heavy_pipeline(raw_target_pool)
 
 if compiled_opportunities:
@@ -201,7 +185,6 @@ if compiled_opportunities:
     
     st.subheader(f"🎯 Top 20 Screened Growth Assets (From {len(compiled_opportunities)} Cleared Candidates)")
     
-    # Render Leaderboard Output Layout
     for rank, (_, row) in enumerate(top_20_gainer_records.iterrows()):
         with st.expander(f"🏆 Rank #{rank+1}: {row['Company']} ({row['Sector']})", expanded=(rank==0)):
             st.write(f"**💰 Price:** {row['Current Price']} | **🚀 1-Year Target:** {row['1-Year Target Value']}")
@@ -214,3 +197,4 @@ if compiled_opportunities:
             st.markdown("**🛡️ Growth Catalyst Analysis:**")
             st.success(row['Identified Catalyst'])
 else:
+    st.error("No stocks from the current 1000-stock batch passed the strict growth and debt thresholds.")
