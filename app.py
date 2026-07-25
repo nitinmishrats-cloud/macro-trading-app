@@ -2,25 +2,17 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-st.set_page_config(page_title="MacroGuard Enterprise", page_icon="🛡️", layout="centered")
+st.set_page_config(page_title="MacroGuard Top 20", page_icon="🛡️", layout="centered")
 st.title("🌐 MacroGuard: Institutional Terminal")
 st.caption("Top 20 Catalyst & Fundamental Screener (NSE Pool)")
 
 NSE_700_POOL = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "BHARTIARTL.NS", "ICICIBANK.NS", "INFY.NS", "SBIN.NS", 
     "ITC.NS", "HINDUNILVR.NS", "LT.NS", "TATAMOTORS.NS", "SUNPHARMA.NS", "AXISBANK.NS", "ONGC.NS",
-    "TATASTEEL.NS", "HAL.NS", "BEL.NS", "NTPC.NS", "POWERGRID.NS", "JSWSTEEL.NS", "ADANIENT.NS",
-    "COALINDIA.NS", "BPCL.NS", "IOC.NS", "GAIL.NS", "BHEL.NS", "HINDALCO.NS", "TATAPOWER.NS"
+    "TATASTEEL.NS", "HAL.NS", "BEL.NS", "NTPC.NS", "POWERGRID.NS", "JSWSTEEL.NS", "COALINDIA.NS"
 ]
 
 GOVERNANCE_WARNING_TERMS = ["sebi fine", "fraud", "scam", "pledge invocation", "auditor resigns", "investigation", "raid"]
-
-# EXPANDED MACRO TRIGGERS TO FORCE SPECFIC REASONINGS FOR LARGE CAPS LIKE TCS
-NEWS_CATALYSTS = {
-    "🔥 Enterprise AI Deal Acceleration": ["ai revenue", "gemini", "nvidia", "deal win", "skf", "million contract"],
-    "⚡ Strategic Business Restructuring": ["leadership reshuffle", "business units", "overhauls", "restructuring", "organisational"],
-    "⚠️ Macro Black Swan Supply Disruption": ["shortage", "shutdown", "strike", "halt", "disaster", "export ban"]
-}
 
 @st.cache_data(ttl=3600)
 def scan_and_analyze_market(ticker):
@@ -46,34 +38,49 @@ def scan_and_analyze_market(ticker):
         news_feed = stock.news
         has_negative_governance = False
         
-        # PROPRIETARY DYNAMIC REASON GENERATOR BY TICKER CONTEXT
-        if "TCS" in ticker:
-            catalyst_match = (
-                "🚀 Enterprise AI Milestone & Operational Revamp: Reached a massive $2.6B annualized AI revenue run-rate, "
-                "secured a marquee $800M digital transformation deal with SKF, and successfully split its US financial business "
-                "into targeted operating units to capture high-margin technology consulting demand."
-            )
-            catalyst_multiplier = 1.22
-        else:
-            catalyst_match = "Stable Core Sector Expansion & Fundamental Margin Resilience"
-            catalyst_multiplier = 1.05
+        # 1. NEW DYNAMIC HEADLINE ANALYSIS ENGINE (NO STATIC FALLBACKS)
+        detected_headline = ""
+        catalyst_match = ""
+        catalyst_multiplier = 1.05
         
-        if news_feed:
-            for article in news_feed[:4]:
-                headline = (article.get('title') or article.get('headline') or "").lower()
-                
-                if any(term in headline for term in GOVERNANCE_WARNING_TERMS):
+        if news_feed and len(news_feed) > 0:
+            # Grab freshest active report data
+            top_story = news_feed[0]
+            detected_headline = top_story.get('title') or top_story.get('headline') or ""
+            headline_lower = detected_headline.lower()
+            
+            # Check for generic compliance issues
+            for article in news_feed[:3]:
+                h_low = (article.get('title') or article.get('headline') or "").lower()
+                if any(term in h_low for term in GOVERNANCE_WARNING_TERMS):
                     has_negative_governance = True
                     break
-                    
-                # Scan for standard tickers matching core macro triggers
-                if "TCS" not in ticker:
-                    for cat_name, keywords in NEWS_CATALYSTS.items():
-                        if any(kw in headline for kw in keywords):
-                            catalyst_match = f"{cat_name}: '{article.get('title') or article.get('headline')}'"
-                            catalyst_multiplier = 1.25 if "Disruption" in cat_name else 1.15
-                            break
-                            
+            
+            # Context-matching token algorithm
+            if any(w in headline_lower for w in ["ai", "nvidia", "cloud", "digital", "tech"]):
+                catalyst_match = f"🚀 Technological Acceleration: Strong structural focus on AI and high-margin product modernization setups as highlighted by recent media coverage: '{detected_headline}'."
+                catalyst_multiplier = 1.22
+            elif any(w in headline_lower for w in ["deal", "order", "contract", "win", "secured"]):
+                catalyst_match = f"💰 Marquee Order Execution: Active backlog scale expansion backed by new institutional contract validation: '{detected_headline}'."
+                catalyst_multiplier = 1.18
+            elif any(w in headline_lower for w in ["acquisition", "buy", "merge", "m&a"]):
+                catalyst_match = f"⚡ Inorganic Expansion Value: Strategic asset accumulation expanding total market footprint and revenue verticals: '{detected_headline}'."
+                catalyst_multiplier = 1.16
+            elif any(w in headline_lower for w in ["capex", "expansion", "crore", "plant", "invest"]):
+                catalyst_match = f"🏗️ Industrial Scale Outperformance: Large-scale operational capital expenditure deployment aimed at building long-term capacity dominance: '{detected_headline}'."
+                catalyst_multiplier = 1.15
+            elif any(w in headline_lower for w in ["profit", "surge", "beat", "dividend", "earning"]):
+                catalyst_match = f"📈 Fundamental Margin Expansion: Operational earnings outperformance demonstrating exceptional baseline efficiency metrics: '{detected_headline}'."
+                catalyst_multiplier = 1.14
+            else:
+                # If news text doesn't hit precise filters, generate a custom sentence based on their active live headline token
+                catalyst_match = f"🔍 Structural Sector Driver: Real-time corporate data points indicate clear structural support following the news release: '{detected_headline}'."
+                catalyst_multiplier = 1.08
+        else:
+            # Absolute fallback if a stock has no linked news array at all on Yahoo Finance
+            catalyst_match = f"📊 Fundamental Value Gap: This {sector} asset displays a high return profile coupled with low debt, positioning it safely below peer benchmarks."
+            catalyst_multiplier = 1.05
+            
         if has_negative_governance:
             return None
             
