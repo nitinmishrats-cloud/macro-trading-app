@@ -2,19 +2,19 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-st.title("🚀 10X Engine – Full NSE Scanner")
+st.set_page_config(layout="wide")
 
-st.info("📡 Fetching NSE stock universe...")
+st.title("🚀 10X Engine v4 (Pro Scanner)")
+st.caption("Clean Data | Momentum | Smart Scoring | Realistic Output")
 
-# Step 1: Get NSE list
+# --- Load NSE Stock List ---
 url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 nse_df = pd.read_csv(url)
 
-# Step 2: Convert symbols
 tickers = nse_df["SYMBOL"].tolist()
 tickers = [t + ".NS" for t in tickers]
 
-# Limit scan (IMPORTANT)
+# Limit scan for performance
 tickers = tickers[:300]
 
 results = []
@@ -31,11 +31,32 @@ for t in tickers:
         roe = info.get("returnOnEquity", 0) or 0
         debt = info.get("debtToEquity", 0) or 0
 
-        if pe == 0 or growth == 0:
+        # --- Skip missing critical data ---
+        if pe <= 0 or growth <= 0:
             continue
 
-        peg = pe / (growth * 100) if growth > 0 else 999
+        # --- REMOVE JUNK DATA ---
+        if growth > 1:   # >100%
+            continue
+        if roe > 0.6:    # >60%
+            continue
 
+        # --- PRICE MOMENTUM FILTER ---
+        hist = stock.history(period="6mo")
+
+        if len(hist) < 50:
+            continue
+
+        price_return = (hist["Close"].iloc[-1] / hist["Close"].iloc[0]) - 1
+
+        # Skip falling stocks
+        if price_return < 0:
+            continue
+
+        # --- PEG ---
+        peg = pe / (growth * 100)
+
+        # --- SCORING ---
         score = 0
         penalty = 0
 
@@ -71,7 +92,7 @@ for t in tickers:
         else:
             score += 5
 
-        # Penalty
+        # --- PENALTIES ---
         if peg > 1.5:
             penalty += 10
         if roe < 0.15:
@@ -83,13 +104,23 @@ for t in tickers:
 
         final_score = score - penalty
 
+        # --- CONVICTION TAG ---
+        if final_score >= 80:
+            tag = "🔥 Strong"
+        elif final_score >= 65:
+            tag = "👍 Good"
+        else:
+            tag = "⚠️ Watch"
+
         results.append({
             "Stock": t,
-            "Score": final_score,
-            "Growth %": growth * 100,
-            "ROE %": roe * 100,
-            "PEG": peg,
-            "Debt": debt
+            "Score": round(final_score, 2),
+            "Growth %": round(growth * 100, 2),
+            "ROE %": round(roe * 100, 2),
+            "PEG": round(peg, 2),
+            "Debt": round(debt, 2),
+            "6M Return %": round(price_return * 100, 2),
+            "Conviction": tag
         })
 
     except:
@@ -98,13 +129,13 @@ for t in tickers:
 df = pd.DataFrame(results)
 
 st.write(f"Total stocks scanned: {len(tickers)}")
-st.write(f"Valid stocks analyzed: {len(df)}")
+st.write(f"Valid stocks after filters: {len(df)}")
 
 if not df.empty:
     df = df.sort_values(by="Score", ascending=False)
 
-    st.success("🏆 Top 15 Opportunities")
+    st.success("🏆 Top 15 High-Conviction Stocks")
     st.dataframe(df.head(15), use_container_width=True)
 
 else:
-    st.error("No stocks found. Try again.")
+    st.error("No strong stocks found. Market may be weak.")
