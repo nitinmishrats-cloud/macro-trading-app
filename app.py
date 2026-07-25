@@ -15,7 +15,7 @@ tickers = nse_df["SYMBOL"].tolist()
 tickers = [t + ".NS" for t in tickers]
 
 # Limit scan for performance
-tickers = tickers[:300]
+tickers = tickers[:600]
 
 results = []
 
