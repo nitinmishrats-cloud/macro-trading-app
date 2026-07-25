@@ -25,6 +25,8 @@ def scan_and_analyze_market(ticker):
         pe_ratio = info.get("trailingPE", 0)
         debt_to_equity = (info.get("debtToEquity", 0) or 0) / 100
         current_price = info.get("currentPrice") or info.get("regularPrice") or info.get("previousClose")
+        roe = (info.get("returnOnEquity", 0) or 0.15)
+        roe_pct = roe * 100
         
         if not current_price or pe_ratio == 0:
             return None
@@ -37,54 +39,56 @@ def scan_and_analyze_market(ticker):
             
         news_feed = stock.news
         has_negative_governance = False
-        
-        # 1. NEW DYNAMIC HEADLINE ANALYSIS ENGINE (NO STATIC FALLBACKS)
         detected_headline = ""
         catalyst_match = ""
         catalyst_multiplier = 1.05
         
-        if news_feed and len(news_feed) > 0:
-            # Grab freshest active report data
+        # 1. FIXED: Correctly index the list element [0] to safely parse fresh headlines
+        if news_feed and isinstance(news_feed, list) and len(news_feed) > 0:
             top_story = news_feed[0]
-            detected_headline = top_story.get('title') or top_story.get('headline') or ""
-            headline_lower = detected_headline.lower()
-            
-            # Check for generic compliance issues
-            for article in news_feed[:3]:
-                h_low = (article.get('title') or article.get('headline') or "").lower()
-                if any(term in h_low for term in GOVERNANCE_WARNING_TERMS):
-                    has_negative_governance = True
-                    break
-            
-            # Context-matching token algorithm
-            if any(w in headline_lower for w in ["ai", "nvidia", "cloud", "digital", "tech"]):
-                catalyst_match = f"🚀 Technological Acceleration: Strong structural focus on AI and high-margin product modernization setups as highlighted by recent media coverage: '{detected_headline}'."
-                catalyst_multiplier = 1.22
-            elif any(w in headline_lower for w in ["deal", "order", "contract", "win", "secured"]):
-                catalyst_match = f"💰 Marquee Order Execution: Active backlog scale expansion backed by new institutional contract validation: '{detected_headline}'."
-                catalyst_multiplier = 1.18
-            elif any(w in headline_lower for w in ["acquisition", "buy", "merge", "m&a"]):
-                catalyst_match = f"⚡ Inorganic Expansion Value: Strategic asset accumulation expanding total market footprint and revenue verticals: '{detected_headline}'."
-                catalyst_multiplier = 1.16
-            elif any(w in headline_lower for w in ["capex", "expansion", "crore", "plant", "invest"]):
-                catalyst_match = f"🏗️ Industrial Scale Outperformance: Large-scale operational capital expenditure deployment aimed at building long-term capacity dominance: '{detected_headline}'."
-                catalyst_multiplier = 1.15
-            elif any(w in headline_lower for w in ["profit", "surge", "beat", "dividend", "earning"]):
-                catalyst_match = f"📈 Fundamental Margin Expansion: Operational earnings outperformance demonstrating exceptional baseline efficiency metrics: '{detected_headline}'."
-                catalyst_multiplier = 1.14
+            if isinstance(top_story, dict):
+                detected_headline = top_story.get('title') or top_story.get('headline') or ""
+                headline_lower = detected_headline.lower()
+                
+                # Scan for standard compliance alerts
+                for article in news_feed[:3]:
+                    h_low = (article.get('title') or article.get('headline') or "").lower()
+                    if any(term in h_low for term in GOVERNANCE_WARNING_TERMS):
+                        has_negative_governance = True
+                        break
+                
+                # Context-matching token algorithm
+                if any(w in headline_lower for w in ["ai", "nvidia", "cloud", "digital", "tech"]):
+                    catalyst_match = f"🚀 Technological Acceleration: Strong structural focus on AI and high-margin product modernization setups as highlighted by recent media coverage: '{detected_headline}'."
+                    catalyst_multiplier = 1.22
+                elif any(w in headline_lower for w in ["deal", "order", "contract", "win", "secured"]):
+                    catalyst_match = f"💰 Marquee Order Execution: Active backlog scale expansion backed by new institutional contract validation: '{detected_headline}'."
+                    catalyst_multiplier = 1.18
+                elif any(w in headline_lower for w in ["acquisition", "buy", "merge", "m&a"]):
+                    catalyst_match = f"⚡ Inorganic Expansion Value: Strategic asset accumulation expanding total market footprint and revenue verticals: '{detected_headline}'."
+                    catalyst_multiplier = 1.16
+                elif any(w in headline_lower for w in ["capex", "expansion", "crore", "plant", "invest"]):
+                    catalyst_match = f"🏗️ Industrial Scale Outperformance: Large-scale operational capital expenditure deployment aimed at building long-term capacity dominance: '{detected_headline}'."
+                    catalyst_multiplier = 1.15
+                elif any(w in headline_lower for w in ["profit", "surge", "beat", "dividend", "earning"]):
+                    catalyst_match = f"📈 Fundamental Margin Expansion: Operational earnings outperformance demonstrating exceptional baseline efficiency metrics: '{detected_headline}'."
+                    catalyst_multiplier = 1.14
+                elif detected_headline:
+                    catalyst_match = f"🔍 Structural Sector Driver: Real-time corporate data points indicate clear structural support following the news release: '{detected_headline}'."
+                    catalyst_multiplier = 1.08
+
+        # 2. FIXED BACKUP LAYER: If news fails or arrives blank, build a dynamic fundamental logic statement
+        if not catalyst_match:
+            if debt_to_equity < 0.1:
+                catalyst_match = f"🛡️ Debt-Free Value Moat: This {sector} market leader demonstrates stellar financial stability with a near-zero leverage ratio of {debt_to_equity:.2f} D/E and a robust return profile of {roe_pct:.1f}% ROE."
+                catalyst_multiplier = 1.12
             else:
-                # If news text doesn't hit precise filters, generate a custom sentence based on their active live headline token
-                catalyst_match = f"🔍 Structural Sector Driver: Real-time corporate data points indicate clear structural support following the news release: '{detected_headline}'."
+                catalyst_match = f"📈 High-Efficiency Capital Play: Backed by exceptional capital efficiency ({roe_pct:.1f}% ROE). Its current value of {pe_ratio:.1f} P/E offers a major institutional margin of safety relative to the industry benchmark."
                 catalyst_multiplier = 1.08
-        else:
-            # Absolute fallback if a stock has no linked news array at all on Yahoo Finance
-            catalyst_match = f"📊 Fundamental Value Gap: This {sector} asset displays a high return profile coupled with low debt, positioning it safely below peer benchmarks."
-            catalyst_multiplier = 1.05
-            
+                
         if has_negative_governance:
             return None
             
-        roe = (info.get("returnOnEquity", 0) or 0.15)
         predicted_target = current_price * (1.0 + roe) * catalyst_multiplier
         expected_gain_pct = ((predicted_target - current_price) / current_price) * 100
         
