@@ -8,8 +8,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="10X Engine", page_icon="🚀", layout="centered")
-st.title("🚀 10X Stock Engine (High Conviction)")
-st.caption("Focused Portfolio | PEG < 1.2 | High ROE | Structural Growth")
+st.title("🚀 10X Stock Engine (High Conviction v2)")
+st.caption("Smart Scoring | PEG | ROE | Growth | Not Over-Strict")
 
 # -------------------------------
 # FETCH NSE STOCKS
@@ -24,13 +24,14 @@ def fetch_tickers():
         symbols = df.iloc[:, 0].dropna().unique().tolist()
         return [f"{s}.NS" for s in symbols if len(str(s)) > 1]
 
-    except:
+    except Exception as e:
+        print("Ticker fetch error:", e)
         fallback = ["DIXON", "KAYNES", "HAL", "BEL", "MAZDOCK", "ASTRAL", "SRF"]
         return [f"{t}.NS" for t in fallback]
 
 
 # -------------------------------
-# HIGH GROWTH THEMES
+# THEMES
 # -------------------------------
 THEMES = [
     "technology",
@@ -44,7 +45,7 @@ THEMES = [
 
 
 # -------------------------------
-# 10X SCORING ENGINE
+# 10X ENGINE (SMART SCORING)
 # -------------------------------
 @st.cache_data(ttl=3600)
 def analyze_stock(ticker):
@@ -52,7 +53,7 @@ def analyze_stock(ticker):
         stock = yf.Ticker(ticker)
 
         hist = stock.history(period="6mo")
-        if hist.empty:
+        if hist.empty or len(hist) < 50:
             return None
 
         price = hist["Close"].iloc[-1]
@@ -65,7 +66,7 @@ def analyze_stock(ticker):
 
         mcap_cr = mcap / 1e7
 
-        # Focus: 1k Cr to 50k Cr sweet spot
+        # Focus zone
         if mcap_cr < 1000 or mcap_cr > 50000:
             return None
 
@@ -82,64 +83,75 @@ def analyze_stock(ticker):
         earn = info.get("earningsGrowth") or 0
 
         # -------------------------------
-        # HARD FILTERS (STRICT)
+        # HARD FILTERS (only essential)
         # -------------------------------
         if "financial" in sector or "bank" in sector:
             return None
 
-        if peg <= 0 or peg > 1.2:
+        if pe == 0:
             return None
 
-        if roe < 0.18:
-            return None
+        # -------------------------------
+        # PENALTY SYSTEM (instead of rejection)
+        # -------------------------------
+        penalty = 0
 
-        if rev < 0.15:
-            return None
+        if peg <= 0 or peg > 1.5:
+            penalty += 10
 
-        if debt > 0.5:
-            return None
+        if roe < 0.15:
+            penalty += 10
+
+        if rev < 0.12:
+            penalty += 10
+
+        if debt > 0.6:
+            penalty += 10
+
+        if pe > 60:
+            penalty += 5
 
         # -------------------------------
         # SCORING
         # -------------------------------
         score = 0
 
-        # Core financial strength
+        # ROE
         if roe > 0.20:
             score += 20
-        else:
+        elif roe > 0.15:
             score += 15
 
+        # Growth
         if rev > 0.20:
             score += 20
-        else:
+        elif rev > 0.12:
             score += 10
 
+        # Earnings quality
         if earn > rev:
             score += 20
         else:
             score += 10
 
-        # Valuation
-        if peg < 1:
+        # PEG
+        if 0 < peg < 1:
             score += 20
-        else:
+        elif peg < 1.5:
             score += 10
 
         # Balance sheet
         if debt < 0.25:
             score += 10
 
-        # Theme bonus
+        # Sector tailwind
         if any(t in sector for t in THEMES):
             score += 10
 
-        # -------------------------------
-        # 10X POTENTIAL SCORE (CUSTOM)
-        # -------------------------------
-        potential = min(100, score)
+        # Apply penalty
+        final_score = max(0, score - penalty)
 
-        # Expected CAGR estimate
+        # CAGR estimate (realistic)
         est_cagr = min(0.30, roe + rev / 2)
 
         return {
@@ -151,17 +163,17 @@ def analyze_stock(ticker):
             "ROE": f"{roe*100:.1f}%",
             "Revenue Growth": f"{rev*100:.1f}%",
             "Debt": f"{debt:.2f}",
-            "Score": potential,
+            "Score": final_score,
             "Est CAGR": f"{est_cagr*100:.1f}%"
         }
 
     except Exception as e:
-        print(f"Error: {ticker} {e}")
+        print(f"Error in {ticker}: {e}")
         return None
 
 
 # -------------------------------
-# MAIN
+# MAIN APP
 # -------------------------------
 st.info("🔍 Scanning market for 10X candidates...")
 
@@ -169,23 +181,30 @@ tickers = fetch_tickers()
 
 results = []
 
-# Limit for stability
-for t in tickers[:60]:
+# Increased scan universe
+scan_limit = 150
+
+for t in tickers[:scan_limit]:
     res = analyze_stock(t)
     if res:
         results.append(res)
 
-if results:
+# DEBUG INFO
+st.write(f"Total stocks scanned: {scan_limit}")
+st.write(f"Stocks passing basic filters: {len(results)}")
+
+# OUTPUT
+if len(results) > 5:
     df = pd.DataFrame(results).sort_values(by="Score", ascending=False).head(10)
 
-    st.subheader("🔥 Top 10 10X Candidates (High Conviction)")
+    st.subheader("🔥 Top 10 10X Candidates (Smart Selection)")
 
     for i, row in df.iterrows():
         with st.expander(f"🚀 {row['Company']} | Score: {row['Score']}"):
             st.write(f"**Price:** {row['Price']}")
             st.write(f"**Market Cap:** {row['Market Cap']}")
             st.write(f"**Sector:** {row['Sector']}")
-            
+
             c1, c2 = st.columns(2)
             c1.metric("PEG", row["PEG"])
             c2.metric("ROE", row["ROE"])
@@ -197,4 +216,4 @@ if results:
             st.success(f"📈 Estimated CAGR: {row['Est CAGR']}")
 
 else:
-    st.error("No high-conviction 10X candidates found.")
+    st.warning("⚠️ Very few strong candidates found. Market may be expensive or data limited.")
