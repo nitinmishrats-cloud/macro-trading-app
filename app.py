@@ -2,107 +2,115 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-st.set_page_config(page_title="MacroGuard Core Engine", page_icon="🛡️", layout="centered")
-st.title("🛡️ MacroGuard: News & Governance Core")
-st.caption("Top 5 News-Catalyzed Value Opportunities & 1-Year Targets")
+st.set_page_config(page_title="MacroGuard Top 20", page_icon="🛡️", layout="centered")
+st.title("🌐 MacroGuard: Institutional Terminal")
+st.caption("Top 20 News-Catalyzed Value Opportunities (NSE Pool)")
 
-NIFTY_LEADERS = [
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "BHARTIARTL.NS", "ICICIBANK.NS", 
-    "INFY.NS", "SBIN.NS", "ITC.NS", "HINDUNILVR.NS", "LT.NS", 
-    "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "SUNPHARMA.NS", "TATAMOTORS.NS", 
-    "HAL.NS", "BEL.NS", "BPCL.NS", "COALINDIA.NS"
+# Core institutional NSE liquid tracker pool
+NSE_700_POOL = [
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "BHARTIARTL.NS", "ICICIBANK.NS", "INFY.NS", "SBIN.NS", 
+    "ITC.NS", "HINDUNILVR.NS", "LT.NS", "TATAMOTORS.NS", "SUNPHARMA.NS", "AXISBANK.NS", "ONGC.NS",
+    "TATASTEEL.NS", "HAL.NS", "BEL.NS", "NTPC.NS", "POWERGRID.NS", "JSWSTEEL.NS", "ADANIENT.NS",
+    "COALINDIA.NS", "BPCL.NS", "IOC.NS", "GAIL.NS", "REC.NS", "PFC.NS", "BHEL.NS", "IRFC.NS",
+    "HINDALCO.NS", "VEDL.NS", "NMDC.NS", "SAIL.NS", "NATIONALUM.NS", "ZOMATO.NS", "TATAPOWER.NS",
+    "SUZLON.NS", "NHPC.NS", "SJVN.NS", "HUDCO.NS", "IRCTC.NS", "CONCOR.NS", "OIL.NS"
 ]
 
-# Simple text keyword dictionary to scan live news feeds for macro-catalysts
-NEWS_TRIGGERS = ["ban", "tariff", "sanction", "closure", "shortage", "demand", "record", "growth", "expansion"]
+GOVERNANCE_WARNING_TERMS = ["sebi fine", "fraud", "scam", "pledge invocation", "auditor resigns", "investigation", "raid"]
 
-@st.cache_data(ttl=1800)
-def analyze_with_news():
-    vetted_buys = []
-    
-    # 1. LIVE NEWS EXTRACTION PHASE
-    active_news_context = ""
-    for anchor_ticker in ["RELIANCE.NS", "TATASTEEL.NS", "HAL.NS", "TCS.NS"]:
-        try:
-            feed = yf.Ticker(anchor_ticker).news
-            if feed and len(feed) > 0:
-                headline = feed[0].get('title') or feed[0].get('headline') or ""
-                # Check if this headline contains any of our target macro-catalyst words
-                if any(trigger in headline.lower() for trigger in NEWS_TRIGGERS):
-                    active_news_context = headline
+NEWS_CATALYSTS = {
+    "Black Swan / Disruption": ["shortage", "shutdown", "strike", "halt", "disaster", "ban"],
+    "Government Policy / PLI": ["subsidy", "pli", "budget", "tariff", "duty hiked", "allocation"],
+    "Tech & Innovation Boom": ["ai infrastructure", "semiconductor", "green hydrogen", "ev plant", "order win"]
+}
+
+@st.cache_data(ttl=3600)
+def scan_and_analyze_market(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        company_name = info.get("shortName", ticker)
+        sector = info.get("sector", "Other Sectors")
+        pe_ratio = info.get("trailingPE", 0)
+        debt_to_equity = (info.get("debtToEquity", 0) or 0) / 100
+        current_price = info.get("currentPrice") or info.get("regularPrice") or info.get("previousClose")
+        
+        if not current_price or pe_ratio == 0:
+            return None
+            
+        industry_pe_benchmark = 32.5 if sector in ["Technology", "Healthcare"] else 22.0
+        industry_debt_benchmark = 0.5 if sector not in ["Financial Services", "Utilities"] else 2.5
+        
+        if pe_ratio >= industry_pe_benchmark or debt_to_equity >= industry_debt_benchmark:
+            return None
+            
+        news_feed = stock.news
+        has_negative_governance = False
+        catalyst_match = "General Industrial Consolidation"
+        catalyst_multiplier = 1.05
+        
+        if news_feed:
+            for article in news_feed[:3]:
+                headline = (article.get('title') or article.get('headline') or "").lower()
+                
+                if any(term in headline for term in GOVERNANCE_WARNING_TERMS):
+                    has_negative_governance = True
                     break
-        except:
-            continue
-            
-    if not active_news_context:
-        active_news_context = "General Industrial Consolidation & Market Demand Optimization"
-
-    # 2. EQUITIES SCANNING & FUNDAMENTAL PHASE
-    for ticker in NIFTY_LEADERS:
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            
-            company_name = info.get("shortName", ticker)
-            sector = info.get("sector", "Other Sectors")
-            pe_ratio = info.get("trailingPE", None)
-            roe = (info.get("returnOnEquity", 0) or 0) * 100
-            debt = (info.get("debtToEquity", 0) or 0) / 100
-            current_price = info.get("currentPrice") or info.get("regularPrice") or info.get("previousClose")
-            
-            # GOVERNANCE CRASH PROTECTIONS
-            if roe < 12 or debt > 1.5 or not current_price:
-                continue
-                
-            hist = stock.history(period="1mo")
-            if len(hist) >= 14:
-                delta = hist['Close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                rsi = 100 - (100 / (1 + (gain / loss).iloc[-1]))
-                
-                # Check if stock is at an accumulation timing window
-                if rsi < 55:
-                    # 1-Year Projected Value Calculation
-                    target_calculation = current_price * (1.0 + (roe / 100)) * (1.0 + ((55 - rsi) / 100))
                     
-                    # COMPOSE DYNAMIC REASON BY MERGING LIVE NEWS WITH BALANCE SHEET RATIOS
-                    detailed_reason = (
-                        f"Reacting to live macro context: '{active_news_context}'. "
-                        f"This specific {sector} company is selected because it maintains top-tier governance "
-                        f"({roe:.1f}% ROE) and safe debt ratios ({debt:.2f} D/E), allowing it to benefit safely long term."
-                    )
-                    
-                    vetted_buys.append({
-                        "Company": company_name,
-                        "Price": f"₹{current_price:.2f}",
-                        "P/E": f"{pe_ratio:.1f}" if pe_ratio else "N/A",
-                        "Debt": f"{debt:.2f}",
-                        "Reason": detailed_reason,
-                        "Target": f"₹{target_calculation:.2f}"
-                    })
-        except:
-            continue
+                for cat_name, keywords in NEWS_CATALYSTS.items():
+                    if any(kw in headline for kw in keywords):
+                        catalyst_match = f"{cat_name}: '{article.get('title') or article.get('headline')}'"
+                        catalyst_multiplier = 1.25 if cat_name == "Black Swan / Disruption" else 1.18
+                        break
+                        
+        if has_negative_governance:
+            return None
             
-    return vetted_buys[:5]  # Limit strictly to the top 5 entries
+        roe = (info.get("returnOnEquity", 0) or 0.15)
+        predicted_target = current_price * (1.0 + roe) * catalyst_multiplier
+        expected_gain_pct = ((predicted_target - current_price) / current_price) * 100
+        
+        return {
+            "Company": company_name,
+            "Sector": sector,
+            "Current Price": f"₹{current_price:.2f}",
+            "P/E": f"{pe_ratio:.1f} (Vs Industry: {industry_pe_benchmark})",
+            "D/E": f"{debt_to_equity:.2f} (Vs Industry: {industry_debt_benchmark})",
+            "Identified News Catalyst": catalyst_match,
+            "1-Year Target Value": f"₹{predicted_target:.2f}",
+            "Gain_Sort_Field": expected_gain_pct,
+            "Expected Percentage Gain": f"{expected_gain_pct:.1f}%"
+        }
+    except:
+        return None
 
-st.info("🔄 Running multi-point news correlation and governance checks...")
+st.info("📡 Scanning top NSE market listings and validating industry fundamentals...")
 
-top_5_news_buys = analyze_with_news()
+screened_results = []
+for symbol in NSE_700_POOL:
+    analysis = scan_and_analyze_market(symbol)
+    if analysis:
+        screened_results.append(analysis)
 
-st.subheader("🎯 Top 5 News-Catalyzed Value Opportunities")
-
-if top_5_news_buys:
-    for idx, stock_data in enumerate(top_5_news_buys):
-        with st.expander(f"⭐ Opportunity #{idx+1}: {stock_data['Company']}", expanded=True):
-            st.markdown(f"**💰 Current Market Price:** {stock_data['Price']}")
-            st.markdown(f"**🚀 Projected 1-Year Target:** {stock_data['Target']}")
+if screened_results:
+    sorted_df = pd.DataFrame(screened_results)
+    # EXPANDED: Changed from head(5) to head(20) to capture the full leaderboard
+    top_20_gainer_records = sorted_df.sort_values(by="Gain_Sort_Field", ascending=False).head(20)
+    
+    st.subheader("🎯 Top 20 Governance-Approved Opportunities")
+    
+    # Renders an optimized mobile scrolling block for all 20 assets
+    for rank, (_, row) in enumerate(top_20_gainer_records.iterrows()):
+        with st.expander(f"🏆 Rank #{rank+1}: {row['Company']} ({row['Sector']})", expanded=False):
+            st.write(f"**💰 Price:** {row['Current Price']} | **🚀 1-Year Target:** {row['1-Year Target Value']}")
+            st.write(f"**📈 Expected Percentage Gain:** {row['Expected Percentage Gain']}")
             
             c1, c2 = st.columns(2)
-            c1.metric("P/E Ratio Valuation", stock_data['P/E'])
-            c2.metric("Debt-to-Equity Ratio", stock_data['Debt'])
+            c1.caption(f"Valuation: {row['P/E']}")
+            c2.caption(f"Leverage: {row['D/E']}")
             
-            st.markdown("**🛡️ Strategy News & Logic Analysis:**")
-            st.warning(stock_data['Reason'])
+            st.markdown("**🛡️ Catalyst Logic:**")
+            st.success(row['Identified News Catalyst'])
 else:
-    st.error("No high-quality stocks currently fit the combined news-trigger and price-dip framework.")
+    st.error("No stocks completely cleared the combined filtering frameworks at this time.")
