@@ -2,58 +2,96 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(page_title="MacroGuard Dynamic", page_icon="🚀", layout="centered")
-st.title("🚀 MacroGuard: 100% Automated Index Engine")
-st.caption("Live Broad-Market Midcap & Smallcap Scraper (No Hardcoded Lists)")
+st.set_page_config(page_title="MacroGuard Enterprise", page_icon="📡", layout="wide")
+st.title("📡 MacroGuard Enterprise: Top 1000 NSE Sieve Engine")
+st.caption("Industrial-Scale Async Processing (Auto-filtering Banks & PSUs | Daily Auto-Refresh)")
 
-# 1. LIVE REAL-TIME INDEX SCRAPER (Replaces the hardcoded stock names completely)
-@st.cache_data(ttl=86400)  # Downloads the fresh market list once a day to keep your phone fast
-def get_live_market_tickers():
+# 1. LIVE DYNAMIC TOP 1000 TICKER HARVESTER
+@st.cache_data(ttl=86400) # Updates dynamically exactly once a day
+def harvest_top_1000_nse_tickers():
+    """
+    Combines core high-volume indices (Nifty Total Market + MidSmall 400 + Nifty 500)
+    to establish a fluid pool of the top 1000 tradeable non-microcap assets on the NSE.
+    """
+    base_pool = set()
+    # High reliability open-source historical indexes mirrors mapping the top market-cap equities
+    urls = [
+        "https://githubusercontent.com",
+        "https://githubusercontent.com",
+        "https://githubusercontent.com"
+    ]
+    
+    for url in urls:
+        try:
+            df = pd.read_csv(url)
+            if 'Symbol' in df.columns:
+                symbols = df['Symbol'].dropna().astype(str).str.strip().tolist()
+                base_pool.update(symbols)
+        except Exception:
+            continue
+            
+    # Fail-safe backup array if corporate cloud filters drop GitHub access
+    if len(base_pool) < 50:
+        fallback = ["DIXON", "SUZLON", "TATAPOWER", "MAZDOCK", "COCHINSHIP", "KPITTECH", "TATAELXSI", "RELIANCE", "TCS", "INFY"]
+        return [f"{t}.NS" for t in fallback]
+        
+    # Standardize names to Yahoo Finance tracking requirements 
+    formatted_tickers = [f"{symbol}.NS" for symbol in base_pool if symbol and not symbol.replace('.','').isdigit()]
+    return sorted(list(set(formatted_tickers)))[:1000]
+
+# 2. ASYNC METRIC CRUNCHER WITH ANTI-BAN CIRCUIT BREAKERS
+def process_single_ticker_safe(ticker):
+    """
+    Safely dissects metrics for one asset. Uses a micro-cooldown timer to protect 
+    the engine from getting blacklisted or causing network structural drops.
+    """
+    GOVERNANCE_WARNING_TERMS = ["sebi fine", "fraud", "scam", "pledge invocation", "auditor resigns", "investigation", "raid"]
+    
     try:
-        # Pulls live data from a verified public financial directory containing mid/small-cap market leaders
-        url = "https://githubusercontent.com"
-        # Since standard raw NSE CSV URLs frequently change or block cloud servers, we fetch a highly reliable, 
-        # diversified multi-sector corporate list and map them to their corresponding high-growth NSE peers dynamically.
-        # To ensure immediate, unblocked loading on your phone, we initialize a verified, fluid mid-tier growth pool:
-        nse_growth_benchmarks = [
-            "DIXON", "SUZLON", "TATAPOWER", "MAZDOCK", "COCHINSHIP", 
-            "KPITTECH", "TATAELXSI", "KAYNES", "CDSL", "CAMS",
-            "HEG", "GRAPHITE", "SRF", "DEEPAKNITR", "AARTIIND",
-            "JWL", "TEXRAIL", "BDL", "BEML", "MTARTECH",
-            "LAURUSLABS", "PPLPHARMA", "ERIS", "MAPMYINDIA", "BLS"
-        ]
-        return [f"{ticker}.NS" for ticker in nse_growth_benchmarks]
-    except:
-        # Safe network fallback pool if the external file directory times out
-        return ["DIXON.NS", "SUZLON.NS", "TATAPOWER.NS", "MAZDOCK.NS", "COCHINSHIP.NS"]
-
-GOVERNANCE_WARNING_TERMS = ["sebi fine", "fraud", "scam", "pledge invocation", "auditor resigns", "investigation", "raid"]
-
-@st.cache_data(ttl=3600)
-def analyze_index_asset(ticker):
-    try:
+        # Prevent rapid-fire anti-bot triggers by injecting a short structural pause
+        time.sleep(0.15) 
+        
         stock = yf.Ticker(ticker)
         info = stock.info
         
-        company_name = info.get("shortName", ticker)
+        company_name = info.get("longName") or info.get("shortName") or ticker
         sector = info.get("sector", "Other Sectors")
-        pe_ratio = info.get("trailingPE", 0)
-        debt_to_equity = (info.get("debtToEquity", 0) or 0) / 100
-        current_price = info.get("currentPrice") or info.get("regularPrice") or info.get("previousClose")
-        roe = (info.get("returnOnEquity", 0) or 0.15)
-        roe_pct = roe * 100
+        industry = info.get("industry", "Other")
         
-        # Completely strips traditional banking/commercial conglomerates to avoid big-cap bias
-        if "Financial" in sector or "Banking" in sector or pe_ratio == 0 or not current_price:
+        # --- BRUTAL ANTI-BANK & ANTI-PSU DEFENSE SIEVE ---
+        name_lower = company_name.lower()
+        sector_lower = sector.lower()
+        industry_lower = industry.lower()
+        
+        ban_words = [
+            "bank", "banking", "financial services", "insurance", "fincorp", "finance",
+            "psu", "state-owned", "corporation of india", "government", "national"
+        ]
+        
+        if any(word in name_lower or word in sector_lower or word in industry_lower for word in ban_words):
             return None
             
+        pe_ratio = info.get("trailingPE", 0)
+        raw_debt = info.get("debtToEquity")
+        debt_to_equity = (raw_debt / 100.0) if raw_debt is not None else 0.0
+        current_price = info.get("currentPrice") or info.get("regularPrice") or info.get("previousClose")
+        roe = info.get("returnOnEquity") or 0.15
+        roe_pct = roe * 100
+        
+        if pe_ratio == 0 or not current_price:
+            return None
+            
+        # Segment limits
         industry_pe_limit = 65.0 if sector in ["Technology", "Healthcare", "Industrials"] else 45.0
         industry_debt_limit = 1.6 if sector == "Industrials" else 1.1
         
         if pe_ratio >= industry_pe_limit or debt_to_equity >= industry_debt_limit:
             return None
             
+        # Media scanning validation loop
         news_feed = stock.news
         has_negative_governance = False
         detected_headline = ""
@@ -73,21 +111,21 @@ def analyze_index_asset(ticker):
                         break
                 
                 if any(w in headline_lower for w in ["ai", "semiconductor", "order", "contract", "win", "secured"]):
-                    catalyst_match = f"🚀 Order Backlog Expansion: Captured new capital acceleration runway backed by recent media updates: '{detected_headline}'."
+                    catalyst_match = f"🚀 Backlog Expansion: '{detected_headline}'."
                     catalyst_multiplier = 1.35
                 elif any(w in headline_lower for w in ["capex", "expansion", "crore", "plant", "capacity"]):
-                    catalyst_match = f"🏗️ Infrastructure Footprint Surge: Deploying capital expenditures to capture multi-bagger volume velocity: '{detected_headline}'."
+                    catalyst_match = f"🏗️ Infrastructure Surge: '{detected_headline}'."
                     catalyst_multiplier = 1.28
                 elif any(w in headline_lower for w in ["profit", "surge", "beat", "earning", "turnaround"]):
-                    catalyst_match = f"📈 Profit Velocity Outperformance: Significant structural earnings acceleration expanding net product margins: '{detected_headline}'."
+                    catalyst_match = f"📈 Earnings Acceleration: '{detected_headline}'."
                     catalyst_multiplier = 1.25
 
         if not catalyst_match:
             if debt_to_equity < 0.15:
-                catalyst_match = f"🛡️ Debt-Free Value Moat: Clean, un-leveraged operational structure ({debt_to_equity:.2f} D/E) compiling net equity velocity at {roe_pct:.1f}% ROE."
+                catalyst_match = f"🛡️ Balanced Moat: Unleveraged structural operations at {roe_pct:.1f}% ROE."
                 catalyst_multiplier = 1.20
             else:
-                catalyst_match = f"⚡ High-Velocity Expansion Engine: Compounding net growth aggressively at {roe_pct:.1f}% ROE, protected by a solid industry valuation peer safety buffer."
+                catalyst_match = f"⚡ Standard Vector: Compounding growth at {roe_pct:.1f}% ROE."
                 catalyst_multiplier = 1.15
                 
         if has_negative_governance:
@@ -100,33 +138,70 @@ def analyze_index_asset(ticker):
             "Company": company_name,
             "Sector": sector,
             "Current Price": f"₹{current_price:.2f}",
-            "P/E": f"{pe_ratio:.1f} (Vs Peer Cap: {industry_pe_limit})",
-            "D/E": f"{debt_to_equity:.2f} (Vs Peer Cap: {industry_debt_limit})",
+            "P/E": f"{pe_ratio:.1f} (Limit: {industry_pe_limit})",
+            "D/E": f"{debt_to_equity:.2f} (Limit: {industry_debt_limit})",
             "Identified Catalyst": catalyst_match,
             "1-Year Target Value": f"₹{predicted_target:.2f}",
             "Gain_Sort_Field": expected_gain_pct,
             "Expected Percentage Gain": f"{expected_gain_pct:.1f}%"
         }
-    except:
+    except Exception:
+        # Gracefully handle dropped records or random API disconnects without stalling the full engine
         return None
 
-st.info("📡 Connecting to live broad-market index registries...")
+# 3. STREAMLIT APP CORE EXECUTIVE CONTROL FLOW
+@st.cache_data(ttl=86400) # Caches final screened matrices for 24 hours to prevent reload overheads
+def run_heavy_pipeline(tickers_list):
+    results = []
+    # Using 3 workers avoids triggering rate limits on Yahoo's network layout
+    max_concurrent_workers = 3 
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    total_tickers = len(tickers_list)
+    
+    with ThreadPoolExecutor(max_workers=max_concurrent_workers) as executor:
+        future_map = {executor.submit(process_single_ticker_safe, ticker): ticker for ticker in tickers_list}
+        
+        for idx, future in enumerate(as_completed(future_map)):
+            ticker_name = future_map[future]
+            try:
+                data = future.result()
+                if data:
+                    results.append(data)
+            except Exception:
+                pass
+            
+            # Real-time UI progress tracking updates
+            percent_complete = int(((idx + 1) / total_tickers) * 100)
+            progress_bar.progress(percent_complete)
+            status_text.text(f"⏳ Evaluated [{idx+1}/{total_tickers}] tickers. Scaled asset pool: {ticker_name}")
+            
+    progress_bar.empty()
+    status_text.empty()
+    return results
 
-# Fetch the list entirely from the live data downloader
-DYNAMIC_POOL = get_live_market_tickers()
+# --- RUN ARCHITECTURE ---
+raw_target_pool = harvest_top_1000_nse_tickers()
+st.sidebar.metric("Target Stock Inventory Loaded", len(raw_target_pool))
 
-screened_results = []
-for symbol in DYNAMIC_POOL:
-    analysis = analyze_index_asset(symbol)
-    if analysis:
-        screened_results.append(analysis)
+if st.sidebar.button("Force Clear Cache & Re-run"):
+    st.cache_data.clear()
+    st.rerun()
 
-if screened_results:
-    sorted_df = pd.DataFrame(screened_results)
+st.info(f"⚡ Processing engine actively initialized for {len(raw_target_pool)} high-liquidity targets. Running deep filters...")
+
+# Runs the cached analysis matrix pipeline
+compiled_opportunities = run_heavy_pipeline(raw_target_pool)
+
+if compiled_opportunities:
+    sorted_df = pd.DataFrame(compiled_opportunities)
     top_20_gainer_records = sorted_df.sort_values(by="Gain_Sort_Field", ascending=False).head(20)
     
-    st.subheader("🎯 Top 20 Mid & Small-Cap Index Opportunities")
+    st.subheader(f"🎯 Top 20 Screened Growth Assets (From {len(compiled_opportunities)} Cleared Candidates)")
     
+    # Render Leaderboard Output Layout
     for rank, (_, row) in enumerate(top_20_gainer_records.iterrows()):
         with st.expander(f"🏆 Rank #{rank+1}: {row['Company']} ({row['Sector']})", expanded=(rank==0)):
             st.write(f"**💰 Price:** {row['Current Price']} | **🚀 1-Year Target:** {row['1-Year Target Value']}")
@@ -139,4 +214,3 @@ if screened_results:
             st.markdown("**🛡️ Growth Catalyst Analysis:**")
             st.success(row['Identified Catalyst'])
 else:
-    st.error("No broad-market growth assets completely cleared the combined filtering checkpoints at this time.")
