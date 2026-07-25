@@ -2,173 +2,199 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
-import io  # FIXED: Critical data stream parsing module added to prevent fallback loops
+import io
+import warnings
 
-st.set_page_config(page_title="MacroGuard API Alpha", page_icon="🚀", layout="centered")
-st.title("🌐 MacroGuard: Institutional API Engine")
-st.caption("All-Market >%25E2%2582%25B91,000 Cr Scanner Driven by Open Financial Data APIs (Zero Hardcoded Lists)")
+warnings.filterwarnings("ignore")
 
-# 1. LIVE API DATA STREAMER (Fully operational with io module integration)
-@st.cache_data(ttl=43200) # Caches the active market list for 12 hours to protect data limits
-def fetch_unrestricted_api_tickers():
+st.set_page_config(page_title="10X Engine", page_icon="🚀", layout="centered")
+st.title("🚀 10X Stock Engine (High Conviction)")
+st.caption("Focused Portfolio | PEG < 1.2 | High ROE | Structural Growth")
+
+# -------------------------------
+# FETCH NSE STOCKS
+# -------------------------------
+@st.cache_data(ttl=43200)
+def fetch_tickers():
     try:
-        # Connecting to a verified, open quantitative data server hosting clean NSE ticker registries
-        api_url = "https://githubusercontent.com"
-        response = requests.get(api_url, timeout=15)
-        
-        if response.status_code == 200:
-            # FIXED: Uses io.StringIO to parse the incoming live web network text data directly into a dataframe table
-            csv_data = io.StringIO(response.text)
-            df = pd.read_csv(csv_data)
-            
-            # Auto-detect column headers to map variables error-free
-            symbol_col = next((col for col in df.columns if any(k in col.lower() for k in ['symbol', 'ticker', 'name'])), df.columns[0])
-            raw_symbols = df[symbol_col].dropna().unique().tolist()
-            
-            # Format cleanly to Yahoo Finance design formats (.NS)
-            return [f"{str(sym).strip()}.NS" for sym in raw_symbols if len(str(sym)) > 1]
-    except Exception as e:
-        pass
-        
-    # High-utility safety fallback if primary open financial registries undergo routine server restarts
-    index_leaders = ["RELIANCE", "TCS", "INFY", "TATASTEEL", "HAL", "BEL", "SUZLON", "DIXON", "MAZDOCK", "KAYNES", "SRF", "DEEPAKNITR"]
-    return [f"{t}.NS" for t in index_leaders]
+        url = "https://raw.githubusercontent.com/stockindia/nse-data/main/nse_all_stocks.csv"
+        res = requests.get(url, timeout=10)
+        df = pd.read_csv(io.StringIO(res.text))
 
-GOVERNANCE_RED_FLAGS = ["sebi fine", "fraud", "scam", "pledge invocation", "auditor resigns", "investigation", "raid"]
-HIGH_GROWTH_INDUSTRIES = ["technology", "healthcare", "industrials", "aerospace", "defense", "chemicals"]
+        symbols = df.iloc[:, 0].dropna().unique().tolist()
+        return [f"{s}.NS" for s in symbols if len(str(s)) > 1]
 
+    except:
+        fallback = ["DIXON", "KAYNES", "HAL", "BEL", "MAZDOCK", "ASTRAL", "SRF"]
+        return [f"{t}.NS" for t in fallback]
+
+
+# -------------------------------
+# HIGH GROWTH THEMES
+# -------------------------------
+THEMES = [
+    "technology",
+    "defense",
+    "industrial",
+    "manufacturing",
+    "chemical",
+    "renewable",
+    "electronics"
+]
+
+
+# -------------------------------
+# 10X SCORING ENGINE
+# -------------------------------
 @st.cache_data(ttl=3600)
-def score_unrestricted_asset(ticker):
+def analyze_stock(ticker):
     try:
         stock = yf.Ticker(ticker)
-        # Fast EOD Data Slicing: Pulls pre-packaged historical matrices in 1 quick shot
-        hist_df = stock.history(period="1mo")
-        if hist_df.empty or len(hist_df) < 14:
+
+        hist = stock.history(period="6mo")
+        if hist.empty:
             return None
-            
-        yesterday_close = hist_df['Close'].iloc[-1]
+
+        price = hist["Close"].iloc[-1]
+
+        fast = stock.fast_info
+        mcap = fast.get("market_cap", 0)
+
+        if not mcap:
+            return None
+
+        mcap_cr = mcap / 1e7
+
+        # Focus: 1k Cr to 50k Cr sweet spot
+        if mcap_cr < 1000 or mcap_cr > 50000:
+            return None
+
         info = stock.info
-        
-        # Pull valuation sizing packet properties
-        raw_mcap = info.get("marketCap", 0)
-        mcap_crores = raw_mcap / 100000000 if raw_mcap else 0
-        
-        # 🚀 STEP 1: STRICT MCAP INDEPENDENT PROTECTION CEILING
-        if mcap_crores < 1000:
-            return None # Instantly skips low-value penny operations to optimize calculation load times
-            
-        sector = info.get("sector", "Other Sectors")
-        company_name = info.get("shortName", ticker)
-        pe_ratio = info.get("trailingPE", 0)
-        debt_to_equity = (info.get("debtToEquity", 0) or 0) / 100
-        roe = (info.get("returnOnEquity", 0) or 0.15)
-        
-        rev_growth = info.get("revenueGrowth", 0) or 0
-        earn_growth = info.get("earningsGrowth", 0) or 0
-        peg_ratio = info.get("pegRatio", 0) or 0
-        free_cash = info.get("freeCashflow", 1) or 1
-        
-        # STEP 2: STRATEGY COMPLIANCE SHIELDS (Drops Banks & PSUs dynamically)
-        if "Financial" in sector or "Banking" in sector or pe_ratio == 0 or free_cash < 0:
-            return None
-        if info.get("heldPercentInsiders", 0) == 0 and any(p in company_name.lower() for p in ["india", "corporation"]):
+
+        sector = (info.get("sector") or "").lower()
+        name = info.get("shortName", ticker)
+
+        pe = info.get("trailingPE") or 0
+        peg = info.get("pegRatio") or 0
+        roe = info.get("returnOnEquity") or 0
+        debt = (info.get("debtToEquity") or 0) / 100
+        rev = info.get("revenueGrowth") or 0
+        earn = info.get("earningsGrowth") or 0
+
+        # -------------------------------
+        # HARD FILTERS (STRICT)
+        # -------------------------------
+        if "financial" in sector or "bank" in sector:
             return None
 
-        score_1_financial = 0
-        score_2_industry = 0
-        score_3_mgmt = 0
-        score_4_governance = 20
-        
-        # 🟡 DIMENSION 1: FINANCIAL RUNWAY (Max 30 Points)
-        if rev_growth > 0.20: score_1_financial += 10
-        if roe > 0.18: score_1_financial += 10
-        if 0 < peg_ratio < 1.4: score_1_financial += 10
-        elif debt_to_equity < 0.25: score_1_financial += 5
-        
-        # 🟡 DIMENSION 2: INDUSTRY OUTPERFORMANCE (Max 30 Points)
-        industry_summary = "Tracking Standard Capital Re-Investment Corridors"
-        if sector.lower() in HIGH_GROWTH_INDUSTRIES:
-            score_2_industry += 15
-            industry_summary = f"🔥 Multi-Bagger Sector Alignment: Operating natively inside high-velocity manufacturing or technology '{sector}' structures."
-            
-        # 🟡 DIMENSIONS 3 & 4: MANAGEMENT VELOCITY & COMPLIANCE AUDITING
-        news_feed = stock.news
-        headline_log = "No severe accounting warning signals or promoter pledging defaults identified in recent media blocks."
-        
-        if news_feed and isinstance(news_feed, list) and len(news_feed) > 0:
-            top_story = news_feed
-            if isinstance(top_story, dict):
-                detected_headline = top_story.get('title') or top_story.get('headline') or ""
-                headline_lower = detected_headline.lower()
-                if any(flag in headline_lower for flag in GOVERNANCE_RED_FLAGS):
-                    score_4_governance -= 15
-                    headline_log = f"🚨 Governance Alert Flagged: Negative compliance news detected in corporate tracking feeds."
-                if any(w in headline_lower for w in ["ai", "semiconductor", "order", "contract", "win", "pli"]):
-                    score_2_industry += 15
-                    industry_summary = f"🚀 Positive Industry Tailwinds: Direct structural contract win or localization benefit confirmed."
+        if peg <= 0 or peg > 1.2:
+            return None
 
-        if earn_growth > rev_growth and earn_growth > 0:
-            score_3_mgmt += 20
-            management_summary = f"👑 Elite Efficiency Moat: Operating profits (+{earn_growth*100:.1f}%) expanding faster than sales (+{rev_growth*100:.1f}%), indicating strong corporate pricing power."
+        if roe < 0.18:
+            return None
+
+        if rev < 0.15:
+            return None
+
+        if debt > 0.5:
+            return None
+
+        # -------------------------------
+        # SCORING
+        # -------------------------------
+        score = 0
+
+        # Core financial strength
+        if roe > 0.20:
+            score += 20
         else:
-            score_3_mgmt += 10
-            management_summary = f"📊 Competent Execution: Maintaining standard baseline output production. Sales tracking at +{rev_growth*100:.1f}% YoY."
+            score += 15
 
-        # COMPUTE FINAL SCORE SUMMARY
-        final_probability_score = score_1_financial + score_2_industry + score_3_mgmt + score_4_governance
-        
-        predicted_target = yesterday_close * (1.0 + (roe * 1.25)) * (1.0 + (final_probability_score / 100))
-        expected_gain_pct = ((predicted_target - yesterday_close) / yesterday_close) * 100
-        
+        if rev > 0.20:
+            score += 20
+        else:
+            score += 10
+
+        if earn > rev:
+            score += 20
+        else:
+            score += 10
+
+        # Valuation
+        if peg < 1:
+            score += 20
+        else:
+            score += 10
+
+        # Balance sheet
+        if debt < 0.25:
+            score += 10
+
+        # Theme bonus
+        if any(t in sector for t in THEMES):
+            score += 10
+
+        # -------------------------------
+        # 10X POTENTIAL SCORE (CUSTOM)
+        # -------------------------------
+        potential = min(100, score)
+
+        # Expected CAGR estimate
+        est_cagr = min(0.30, roe + rev / 2)
+
         return {
-            "Company": company_name,
-            "Sector": sector,
-            "Price": f"₹{yesterday_close:.2f}",
-            "Market Cap": f"₹{mcap_crores:,.0f} Cr",
-            "P/E": f"{pe_ratio:.1f}",
-            "D/E": f"{debt_to_equity:.2f}",
-            "Score_Sort": final_probability_score,
-            "Probability Score": f"{final_probability_score} / 100 Points",
-            "1-Year Target Value": f"₹{predicted_target:.2f}",
-            "Expected Percentage Gain": f"{expected_gain_pct:.1f}%",
-            "Ind_Logic": industry_summary,
-            "Mgmt_Logic": management_summary,
-            "Gov_Logic": headline_log
+            "Company": name,
+            "Sector": sector.title(),
+            "Price": f"₹{price:.2f}",
+            "Market Cap": f"₹{mcap_cr:,.0f} Cr",
+            "PEG": round(peg, 2),
+            "ROE": f"{roe*100:.1f}%",
+            "Revenue Growth": f"{rev*100:.1f}%",
+            "Debt": f"{debt:.2f}",
+            "Score": potential,
+            "Est CAGR": f"{est_cagr*100:.1f}%"
         }
-    except:
+
+    except Exception as e:
+        print(f"Error: {ticker} {e}")
         return None
 
-st.info("📡 Connecting to open quantitative data API streams...")
 
-# Trigger the updated dynamic API file downloader
-DYNAMIC_API_POOL = fetch_unrestricted_api_tickers()
+# -------------------------------
+# MAIN
+# -------------------------------
+st.info("🔍 Scanning market for 10X candidates...")
 
-if DYNAMIC_API_POOL:
-    screened_results = []
-    # Processes the incoming dynamic list safely up to 150 records at a time to optimize smartphone memory parameters
-    for symbol in DYNAMIC_API_POOL[:150]:  
-        analysis = score_unrestricted_asset(symbol)
-        if analysis:
-            screened_results.append(analysis)
+tickers = fetch_tickers()
 
-    if screened_results:
-        sorted_df = pd.DataFrame(screened_results)
-        top_20_multibaggers = sorted_df.sort_values(by="Score_Sort", ascending=False).head(20)
-        
-        st.subheader("🎯 Unrestricted Top 20 Multi-Bagger Leaderboard (>₹1,000 Cr)")
-        
-        for rank, (_, row) in enumerate(top_20_multibaggers.iterrows()):
-            with st.expander(f"🏆 Rank #{rank+1}: {row['Company']} ➔ {row['Probability Score']}", expanded=(rank==0)):
-                st.write(f"**💰 Closed EOD Price Value:** {row['Price']} | **🚀 1-Year Target Milestone:** {row['1-Year Target Value']}")
-                st.write(f"**📈 Expected Annual Strategy Gain:** {row['Expected Percentage Gain']} | **🏢 Market Cap:** {row['Market Cap']}")
-                
-                c1, c2 = st.columns(2)
-                c1.caption(f"Valuation P/E Ratio: {row['P/E']}")
-                c2.caption(f"Debt-to-Equity Balance: {row['D/E']}")
-                
-                st.markdown("#### 🛡️ 4-Dimensional Audit Checklist Breakdown:")
-                st.info(f"**1 & 2) Industry Trends & Positives:**\n{row['Ind_Logic']}")
-                st.success(f"**3) Management Quality Verification:**\n{row['Mgmt_Logic']}")
-                st.warning(f"**4) Corporate Governance News Audit:**\n{row['Gov_Logic']}")
-    else:
-        st.error("Data processing pipeline complete. No stocks currently satisfy safety bounds inside this query index block.")
+results = []
+
+# Limit for stability
+for t in tickers[:60]:
+    res = analyze_stock(t)
+    if res:
+        results.append(res)
+
+if results:
+    df = pd.DataFrame(results).sort_values(by="Score", ascending=False).head(10)
+
+    st.subheader("🔥 Top 10 10X Candidates (High Conviction)")
+
+    for i, row in df.iterrows():
+        with st.expander(f"🚀 {row['Company']} | Score: {row['Score']}"):
+            st.write(f"**Price:** {row['Price']}")
+            st.write(f"**Market Cap:** {row['Market Cap']}")
+            st.write(f"**Sector:** {row['Sector']}")
+            
+            c1, c2 = st.columns(2)
+            c1.metric("PEG", row["PEG"])
+            c2.metric("ROE", row["ROE"])
+
+            c3, c4 = st.columns(2)
+            c3.metric("Revenue Growth", row["Revenue Growth"])
+            c4.metric("Debt", row["Debt"])
+
+            st.success(f"📈 Estimated CAGR: {row['Est CAGR']}")
+
+else:
+    st.error("No high-conviction 10X candidates found.")
