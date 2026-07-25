@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import feedparser
-import urllib.parse
 
 st.set_page_config(page_title="MacroGuard Terminal", page_icon="🛡️", layout="centered")
 st.title("🌐 MacroGuard: All-Market Engine")
@@ -16,10 +15,11 @@ NIFTY_LEADERS = [
     "HAL.NS", "BEL.NS", "BHEL.NS", "BPCL.NS", "IOC.NS", "WIPRO.NS"
 ]
 
+# Simplified keyword strings to prevent complex URL breaks in Python 3.14
 SCENARIOS = {
-    "Global Supply Shocks": ["export ban", "anti-dumping", "factory closure", "supply shortage"],
-    "Disaster Disruption": ["flood halts", "mine suspended", "crop damage", "refinery fire"],
-    "Geopolitical Conflicts": ["sanctions", "shipping blocked", "military spending", "tariffs"]
+    "Global Supply Shocks": "export+ban+OR+anti+dumping+OR+factory+closure",
+    "Disaster Disruption": "flood+halts+OR+mine+suspended+OR+crop+damage",
+    "Geopolitical Conflicts": "sanctions+OR+shipping+blocked+OR+tariffs"
 }
 
 def analyze_any_stock(ticker):
@@ -33,6 +33,7 @@ def analyze_any_stock(ticker):
         roe = (info.get("returnOnEquity", 0) or 0) * 100
         debt = (info.get("debtToEquity", 0) or 0) / 100
         
+        # Hard Protection Layer
         if roe < 12 or debt > 1.5:
             return None 
             
@@ -58,16 +59,13 @@ def analyze_any_stock(ticker):
 
 st.info("🔄 Scraping macro events and executing multi-point structural checks...")
 
-for name, keywords in SCENARIOS.items():
-    # FIXED: Properly formats and cleans up the search terms for Google News
-    clean_query = " OR ".join([f'"{k}"' for k in keywords])
-    encoded_query = urllib.parse.quote_plus(clean_query)
-    feed_url = f"https://google.com{encoded_query}&hl=en-US&gl=US&ceid=US:en"
+for name, query_string in SCENARIOS.items():
+    # FIXED: Direct safe link format that avoids percent-encoding anomalies completely
+    feed_url = f"https://google.com{query_string}&hl=en-US&gl=US&ceid=US:en"
     
     feed = feedparser.parse(feed_url)
     
     if feed.entries:
-        # FIXED: Correctly extracts individual article entities
         first_entry = feed.entries[0]
         with st.expander(f"🔥 ALERT: {name}", expanded=True):
             st.markdown(f"**Live Trigger Headline:** {first_entry.title}")
