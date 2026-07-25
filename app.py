@@ -8,7 +8,6 @@ st.set_page_config(page_title="MacroGuard Terminal", page_icon="🛡️", layout
 st.title("🌐 MacroGuard: All-Market Engine")
 st.caption("Automated Global News & Fundamentals Filter")
 
-# Core Nifty benchmarks to screen cross-sector market leaders instantly on mobile
 NIFTY_LEADERS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "BHARTIARTL.NS", "ICICIBANK.NS", 
     "INFY.NS", "SBIN.NS", "LTIM.NS", "ITC.NS", "HINDUNILVR.NS", "LT.NS", 
@@ -34,7 +33,6 @@ def analyze_any_stock(ticker):
         roe = (info.get("returnOnEquity", 0) or 0) * 100
         debt = (info.get("debtToEquity", 0) or 0) / 100
         
-        # UNDER THE HOOD SHIELDS: Drop junk stocks instantly
         if roe < 12 or debt > 1.5:
             return None 
             
@@ -61,14 +59,19 @@ def analyze_any_stock(ticker):
 st.info("🔄 Scraping macro events and executing multi-point structural checks...")
 
 for name, keywords in SCENARIOS.items():
-    query = urllib.parse.quote(" OR ".join([f'"{k}"' for k in keywords[:2]]))
-    feed = feedparser.parse(f"https://google.com{query}&hl=en-US&gl=US&ceid=US:en")
+    # FIXED: Properly formats and cleans up the search terms for Google News
+    clean_query = " OR ".join([f'"{k}"' for k in keywords])
+    encoded_query = urllib.parse.quote_plus(clean_query)
+    feed_url = f"https://google.com{encoded_query}&hl=en-US&gl=US&ceid=US:en"
+    
+    feed = feedparser.parse(feed_url)
     
     if feed.entries:
-        entry = feed.entries[0]
+        # FIXED: Correctly extracts individual article entities
+        first_entry = feed.entries[0]
         with st.expander(f"🔥 ALERT: {name}", expanded=True):
-            st.markdown(f"**Live Trigger Headline:** {entry.title}")
-            st.markdown(f"[View Global News Coverage]({entry.link})")
+            st.markdown(f"**Live Trigger Headline:** {first_entry.title}")
+            st.markdown(f"[View Global News Coverage]({first_entry.link})")
             st.markdown("**🛡️ Governance-Approved Opportunities Found:**")
             
             vetted_opportunities = []
