@@ -1,7 +1,6 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import requests
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -13,7 +12,6 @@ st.caption("Industrial Async Processing (Comprehensive Small, Mid & Large Cap Ma
 @st.cache_data(ttl=86400) 
 def harvest_balanced_nse_tickers():
     base_pool = set()
-    # Explicitly pulling Nifty 500 alongside Smallcap 250 to force-feed small caps into the engine
     urls = [
         "https://githubusercontent.com",
         "https://githubusercontent.com",
@@ -30,7 +28,7 @@ def harvest_balanced_nse_tickers():
             continue
             
     if len(base_pool) < 50:
-        fallback = ["DIXON", "SUZLON", "TATAPOWER", "MAZDOCK", "COCHINSHIP", "KPITTECH", "IRFC", "RITES", "RVNL"]
+        fallback = ["DIXON", "SUZLON", "TATAPOWER", "MAZDOCK", "COCHINSHIP", "KPITTECH", "TATAELXSI", "RELIANCE", "TCS", "INFY"]
         return [f"{t}.NS" for t in fallback]
         
     formatted_tickers = [f"{symbol}.NS" for symbol in base_pool if symbol and not symbol.replace('.','').isdigit()]
@@ -41,51 +39,52 @@ def process_single_ticker_safe(ticker):
     GOVERNANCE_WARNING_TERMS = ["sebi fine", "fraud", "scam", "pledge invocation", "auditor resigns", "investigation", "raid"]
     
     try:
-        time.sleep(0.12) # Speed throttle optimized for concurrent execution
+        time.sleep(0.15) # Safe structural throttle delay to maintain API stability
         
         stock = yf.Ticker(ticker)
         info = stock.info
         
+        if not info or not isinstance(info, dict):
+            return None
+            
         company_name = info.get("longName") or info.get("shortName") or ticker
         sector = info.get("sector", "Other Sectors")
         industry = info.get("industry", "Other")
         
-        # --- ANTI-BANK & ANTI-PSU DEFENSE SIEVE ---
+        # --- ANTI-BANK & TARGETED ANTI-PSU DEFENSE SIEVE ---
         name_lower = company_name.lower()
         sector_lower = sector.lower()
         industry_lower = industry.lower()
         
         ban_words = [
-            "bank", "banking", "financial services", "insurance", "fincorp", "finance",
-            "psu", "state-owned", "central bank", "government of india"
+            "bank", "banking", "financial services", "insurance", "fincorp", "finance", 
+            "state bank", "central bank of", "cooperative bank"
         ]
         
         if any(word in name_lower or word in sector_lower or word in industry_lower for word in ban_words):
             return None
             
-        # FIX 1: Prevent unpopulated API records from killing small-cap evaluations
-        pe_ratio = info.get("trailingPE") or info.get("forwardPE") or info.get("priceToSalesTrailing12Months", 0) * 15.0
+        pe_ratio = info.get("trailingPE") or info.get("forwardPE") or (info.get("priceToSalesTrailing12Months", 0) * 15.0)
         
         raw_debt = info.get("debtToEquity")
         if raw_debt is not None:
             debt_to_equity = (raw_debt / 100.0) if raw_debt > 5 else raw_debt
         else:
-            debt_to_equity = 0.25 # Safe median allocation assignment for minor growth assets
+            debt_to_equity = 0.25 # Assigned standard baseline median
             
         current_price = info.get("currentPrice") or info.get("regularPrice") or info.get("previousClose")
         roe = info.get("returnOnEquity") or info.get("returnOnAssets", 0.08) or 0.12
         roe_pct = roe * 100
         
-        if pe_ratio == 0 or not current_price:
+        if not pe_ratio or pe_ratio == 0 or not current_price:
             return None
             
-        # FIX 2: Relax thresholds for micro/small cap companies scaling execution infrastructure
         market_cap = info.get("marketCap", 0)
-        is_small_cap = market_cap < 50_000_000_000 # Under ~5000 Crore INR
+        is_small_cap = market_cap < 50_000_000_000 # Under 5000 Crore INR
         
         if is_small_cap:
             industry_pe_limit = 75.0 if sector in ["Technology", "Healthcare", "Industrials"] else 55.0
-            industry_debt_limit = 1.95 # Higher debt allowance for small-cap infrastructure/manufacturing tracking
+            industry_debt_limit = 1.95 
         else:
             industry_pe_limit = 65.0 if sector in ["Technology", "Healthcare", "Industrials"] else 45.0
             industry_debt_limit = 1.6 if sector == "Industrials" else 1.1
@@ -100,6 +99,7 @@ def process_single_ticker_safe(ticker):
         catalyst_match = ""
         catalyst_multiplier = 1.05
         
+        # FIXED: Extracting elements via index 0 instead of matching list structures to dict classes directly
         if news_feed and isinstance(news_feed, list) and len(news_feed) > 0:
             top_story = news_feed[0]
             if isinstance(top_story, dict):
@@ -123,6 +123,7 @@ def process_single_ticker_safe(ticker):
                     catalyst_match = f"📈 Earnings Acceleration: '{detected_headline}'."
                     catalyst_multiplier = 1.25
 
+        # FIXED: Properly positioned outside the conditional scope bounds
         if not catalyst_match:
             if debt_to_equity < 0.15:
                 catalyst_match = f"🛡️ Balanced Moat: Unleveraged operations at {roe_pct:.1f}% ROE."
@@ -157,7 +158,7 @@ def process_single_ticker_safe(ticker):
 @st.cache_data(ttl=86400)
 def run_heavy_pipeline(tickers_list):
     results = []
-    max_concurrent_workers = 4 # Incremented workers slightly for processing larger batches
+    max_concurrent_workers = 4 
     
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -199,7 +200,7 @@ if compiled_opportunities:
     sorted_df = pd.DataFrame(compiled_opportunities)
     top_20_gainer_records = sorted_df.sort_values(by="Gain_Sort_Field", ascending=False).head(20)
     
-    st.subheader(f"🎯 Top 20 Screened Growth Assets (From {len(compiled_opportunities)} Cleared Candidates)")
+    st.subheader(f"🎯 Top Screened Growth Assets (From {len(compiled_opportunities)} Cleared Candidates)")
     
     for rank, (_, row) in enumerate(top_20_gainer_records.iterrows()):
         with st.expander(f"🏆 Rank #{rank+1}: {row['Company']} ({row['Sector']})", expanded=(rank==0)):
@@ -213,3 +214,4 @@ if compiled_opportunities:
             st.markdown("**🛡️ Growth Catalyst Analysis:**")
             st.success(row['Identified Catalyst'])
 else:
+    st.error("No stocks from the current batch passed the filtering criteria. Try forcing a cache refresh.")
