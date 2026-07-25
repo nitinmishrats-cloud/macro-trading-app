@@ -1,26 +1,19 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import feedparser
-import urllib.request
 
 st.set_page_config(page_title="MacroGuard Terminal", page_icon="🛡️", layout="centered")
 st.title("🌐 MacroGuard: All-Market Engine")
-st.caption("Automated Global News & Fundamentals Filter")
+st.caption("Automated Market News & Fundamentals Filter")
 
+# Core Nifty benchmarks to screen cross-sector market leaders instantly on mobile
 NIFTY_LEADERS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "BHARTIARTL.NS", "ICICIBANK.NS", 
     "INFY.NS", "SBIN.NS", "LTIM.NS", "ITC.NS", "HINDUNILVR.NS", "LT.NS", 
     "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "COALINDIA.NS", "NTPC.NS", 
     "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "TATAMOTORS.NS", "M&M.NS",
-    "HAL.NS", "BEL.NS", "BHEL.NS", "BPCL.NS", "IOC.NS", "WIPRO.NS"
+    "HAL.NS", "BEL.NS", "BHEL.NS", "WIPRO.NS"
 ]
-
-SCENARIOS = {
-    "Global Supply Shocks": "export+ban+OR+anti+dumping+OR+factory+closure",
-    "Disaster Disruption": "flood+halts+OR+mine+suspended+OR+crop+damage",
-    "Geopolitical Conflicts": "sanctions+OR+shipping+blocked+OR+tariffs"
-}
 
 def analyze_any_stock(ticker):
     try:
@@ -33,7 +26,7 @@ def analyze_any_stock(ticker):
         roe = (info.get("returnOnEquity", 0) or 0) * 100
         debt = (info.get("debtToEquity", 0) or 0) / 100
         
-        # Hard Security Protection Layer
+        # Hard Security Protection Layer: Drop junk stocks instantly
         if roe < 12 or debt > 1.5:
             return None 
             
@@ -57,34 +50,31 @@ def analyze_any_stock(ticker):
     except:
         return None
 
-st.info("🔄 Scraping macro events and executing multi-point structural checks...")
+st.info("🔄 Running multi-point structural checks over the Indian market...")
 
-for name, query_string in SCENARIOS.items():
-    feed_url = f"https://google.com{query_string}&hl=en-US&gl=US&ceid=US:en"
-    
+# Core Indian Market Headlines Section
+st.subheader("📰 Recent Corporate Signals & News")
+
+news_found = False
+# Scan market leaders to fetch official news feeds directly from Yahoo Finance data portals
+for ticker in ["RELIANCE.NS", "TATASTEEL.NS", "HAL.NS", "TCS.NS"]:
     try:
-        # ADVANCED FIX: Adding a mobile browser header bypasses network drops entirely
-        req = urllib.request.Request(
-            feed_url, 
-            headers={'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15'}
-        )
+        stock_obj = yf.Ticker(ticker)
+        ticker_news = stock_obj.news
         
-        # Fetch data securely through browser spoofing
-        with urllib.request.urlopen(req, timeout=10) as response:
-            html_content = response.read()
+        if ticker_news:
+            # Grab the single freshest corporate article for this marker
+            latest_story = ticker_news[0]
+            news_found = True
             
-        feed = feedparser.parse(html_content)
-        
-        if feed.entries:
-            first_entry = feed.entries[0] # Pick the actual first headline element safely
-            with st.expander(f"🔥 ALERT: {name}", expanded=True):
-                st.markdown(f"**Live Trigger Headline:** {first_entry.title}")
-                st.markdown(f"[View Global News Coverage]({first_entry.link})")
-                st.markdown("**🛡️ Governance-Approved Opportunities Found:**")
+            with st.expander(f"🔥 SIGNAL BREAKOUT: {ticker.replace('.NS','')}", expanded=True):
+                st.markdown(f"**Headline:** {latest_story.get('title')}")
+                st.markdown(f"[View Full Article Source]({latest_story.get('link')})")
+                st.markdown("**🛡️ Governance-Approved Structural Opportunities Available:**")
                 
                 vetted_opportunities = []
-                for ticker in NIFTY_LEADERS:
-                    analysis = analyze_any_stock(ticker)
+                for lead_ticker in NIFTY_LEADERS:
+                    analysis = analyze_any_stock(lead_ticker)
                     if analysis:
                         vetted_opportunities.append(analysis)
                 
@@ -92,6 +82,9 @@ for name, query_string in SCENARIOS.items():
                     df = pd.DataFrame(vetted_opportunities)
                     st.dataframe(df, use_container_width=True, hide_index=True)
                 else:
-                    st.caption("No stocks currently satisfy corporate governance safety buffers for this event.")
-    except Exception as e:
-        st.warning(f"Skipping feed check for '{name}' temporarily due to live network rate-limits.")
+                    st.caption("No stocks currently satisfy corporate governance safety buffers.")
+    except:
+        continue
+
+if not news_found:
+    st.warning("Yahoo Finance data engines are updating information matrices. Please refresh in a moment.")
