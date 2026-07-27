@@ -1,141 +1,215 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+import requests
+import yfinance as yf
+import numpy as np
 
 st.set_page_config(layout="wide")
 
-st.title("🚀 10X Engine v4 (Pro Scanner)")
-st.caption("Clean Data | Momentum | Smart Scoring | Realistic Output")
+st.title("🚀 10X Engine PRO (Full NSE Scanner)")
+st.caption("All Stocks | Governance | Momentum | Smart Alerts")
 
-# --- Load NSE Stock List ---
-url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-nse_df = pd.read_csv(url)
+# -----------------------------
+# CONFIG
+# -----------------------------
+API_KEY = "YOUR_API_KEY"   # replace if available
 
-tickers = nse_df["SYMBOL"].tolist()
-tickers = [t + ".NS" for t in tickers]
+# -----------------------------
+# STEP 1: LOAD NSE STOCK LIST
+# -----------------------------
+@st.cache_data(ttl=86400)
+def load_nse_list():
+    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+    df = pd.read_csv(url)
+    df["ticker"] = df["SYMBOL"] + ".NS"
+    return df
 
-# Limit scan for performance
-tickers = tickers[:600]
+nse_df = load_nse_list()
+tickers = nse_df["ticker"].tolist()
 
-results = []
+st.info(f"🔎 Total NSE Stocks: {len(tickers)}")
 
-st.info(f"🔎 Scanning {len(tickers)} stocks...")
-
-for t in tickers:
+# -----------------------------
+# STEP 2: TRY API (FAST)
+# -----------------------------
+def fetch_api_data():
     try:
-        stock = yf.Ticker(t)
-        info = stock.info
+        url = f"https://data.businessquant.com/screener?api_key={API_KEY}"
 
-        pe = info.get("trailingPE", 0) or 0
-        growth = info.get("revenueGrowth", 0) or 0
-        roe = info.get("returnOnEquity", 0) or 0
-        debt = info.get("debtToEquity", 0) or 0
+        payload = {
+            "filters": [
+                {"metric": "revenue_growth", "operator": ">", "value": 0.1},
+                {"metric": "roe", "operator": ">", "value": 0.12},
+                {"metric": "debt_to_equity", "operator": "<", "value": 0.6}
+            ],
+            "columns": [
+                "symbol",
+                "revenue_growth",
+                "roe",
+                "pe_ratio",
+                "debt_to_equity",
+                "promoter_holding",
+                "pledged_percent"
+            ],
+            "limit": 2000
+        }
 
-        # --- Skip missing critical data ---
-        if pe <= 0 or growth <= 0:
+        r = requests.post(url, json=payload)
+        data = r.json()
+
+        df = pd.DataFrame(data["data"])
+        df["ticker"] = df["symbol"] + ".NS"
+
+        return df
+
+    except:
+        return None
+
+api_df = fetch_api_data()
+
+# -----------------------------
+# STEP 3: FALLBACK (YFINANCE)
+# -----------------------------
+def fallback_data():
+    results = []
+
+    progress = st.progress(0)
+
+    for i, t in enumerate(tickers[:500]):  # limit fallback
+        try:
+            stock = yf.Ticker(t)
+            info = stock.info
+
+            results.append({
+                "ticker": t,
+                "revenue_growth": info.get("revenueGrowth", 0),
+                "roe": info.get("returnOnEquity", 0),
+                "pe_ratio": info.get("trailingPE", 0),
+                "debt_to_equity": info.get("debtToEquity", 0),
+                "promoter_holding": info.get("heldPercentInsiders", 0) * 100,
+                "pledged_percent": 0
+            })
+
+        except:
             continue
 
-        # --- REMOVE JUNK DATA ---
-        if growth > 1:   # >100%
-            continue
-        if roe > 0.6:    # >60%
-            continue
+        progress.progress((i + 1) / 500)
 
-        # --- PRICE MOMENTUM FILTER ---
-        hist = stock.history(period="6mo")
+    return pd.DataFrame(results)
+
+if api_df is None or api_df.empty:
+    st.warning("API failed, using fallback (limited scan)...")
+    df = fallback_data()
+else:
+    df = api_df
+
+# -----------------------------
+# STEP 4: GOVERNANCE FILTER
+# -----------------------------
+df = df[
+    (df["promoter_holding"] > 50) &
+    (df["pledged_percent"] < 5)
+]
+
+# -----------------------------
+# STEP 5: MOMENTUM FILTER
+# -----------------------------
+@st.cache_data(ttl=3600)
+def get_price_data(tickers):
+    data = yf.download(tickers, period="6mo", group_by="ticker", threads=True)
+    return data
+
+price_data = get_price_data(df["ticker"].tolist())
+
+momentum_list = []
+
+for t in df["ticker"]:
+    try:
+        hist = price_data[t]
 
         if len(hist) < 50:
             continue
 
-        price_return = (hist["Close"].iloc[-1] / hist["Close"].iloc[0]) - 1
+        ret = (hist["Close"].iloc[-1] / hist["Close"].iloc[0]) - 1
 
-        # Skip falling stocks
-        if price_return < 0:
-            continue
-
-        # --- PEG ---
-        peg = pe / (growth * 100)
-
-        # --- SCORING ---
-        score = 0
-        penalty = 0
-
-        # Growth
-        if growth > 0.25:
-            score += 30
-        elif growth > 0.15:
-            score += 20
-        else:
-            score += 10
-
-        # ROE
-        if roe > 0.20:
-            score += 25
-        elif roe > 0.15:
-            score += 15
-        else:
-            score += 5
-
-        # PEG
-        if peg < 1:
-            score += 25
-        elif peg < 1.5:
-            score += 15
-        else:
-            score += 5
-
-        # Debt
-        if debt < 0.3:
-            score += 20
-        elif debt < 0.6:
-            score += 10
-        else:
-            score += 5
-
-        # --- PENALTIES ---
-        if peg > 1.5:
-            penalty += 10
-        if roe < 0.15:
-            penalty += 10
-        if growth < 0.12:
-            penalty += 10
-        if debt > 0.6:
-            penalty += 10
-
-        final_score = score - penalty
-
-        # --- CONVICTION TAG ---
-        if final_score >= 80:
-            tag = "🔥 Strong"
-        elif final_score >= 65:
-            tag = "👍 Good"
-        else:
-            tag = "⚠️ Watch"
-
-        results.append({
-            "Stock": t,
-            "Score": round(final_score, 2),
-            "Growth %": round(growth * 100, 2),
-            "ROE %": round(roe * 100, 2),
-            "PEG": round(peg, 2),
-            "Debt": round(debt, 2),
-            "6M Return %": round(price_return * 100, 2),
-            "Conviction": tag
-        })
+        if ret > 0:
+            momentum_list.append((t, ret))
 
     except:
         continue
 
-df = pd.DataFrame(results)
+momentum_df = pd.DataFrame(momentum_list, columns=["ticker", "return"])
 
-st.write(f"Total stocks scanned: {len(tickers)}")
-st.write(f"Valid stocks after filters: {len(df)}")
+df = df.merge(momentum_df, on="ticker")
 
-if not df.empty:
-    df = df.sort_values(by="Score", ascending=False)
+# -----------------------------
+# STEP 6: SCORING
+# -----------------------------
+df["PEG"] = df["pe_ratio"] / (df["revenue_growth"] * 100)
 
-    st.success("🏆 Top 15 High-Conviction Stocks")
-    st.dataframe(df.head(15), use_container_width=True)
+def score(row):
+    s = 0
 
-else:
-    st.error("No strong stocks found. Market may be weak.")
+    # Growth
+    if row["revenue_growth"] > 0.25:
+        s += 30
+    elif row["revenue_growth"] > 0.15:
+        s += 20
+    else:
+        s += 10
+
+    # ROE
+    if row["roe"] > 0.20:
+        s += 25
+    elif row["roe"] > 0.15:
+        s += 15
+    else:
+        s += 5
+
+    # PEG
+    if row["PEG"] < 1:
+        s += 25
+    elif row["PEG"] < 1.5:
+        s += 15
+    else:
+        s += 5
+
+    # Debt
+    if row["debt_to_equity"] < 0.3:
+        s += 20
+    elif row["debt_to_equity"] < 0.6:
+        s += 10
+    else:
+        s += 5
+
+    return s
+
+df["Score"] = df.apply(score, axis=1)
+
+df = df.sort_values(by="Score", ascending=False)
+
+# -----------------------------
+# STEP 7: ALERT SYSTEM
+# -----------------------------
+def check_new_entries(df):
+    try:
+        old = pd.read_csv("last_run.csv")
+        new = df.head(15)
+
+        new_stocks = set(new["ticker"]) - set(old["ticker"])
+
+        if len(new_stocks) > 0:
+            st.warning(f"🚨 NEW STOCKS FOUND: {list(new_stocks)}")
+
+        new.to_csv("last_run.csv", index=False)
+
+    except:
+        df.head(15).to_csv("last_run.csv", index=False)
+
+check_new_entries(df)
+
+# -----------------------------
+# OUTPUT
+# -----------------------------
+st.success("🏆 Top 15 High-Conviction Stocks")
+st.dataframe(df.head(15), use_container_width=True)
