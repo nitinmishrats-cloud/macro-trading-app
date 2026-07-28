@@ -1,240 +1,181 @@
-import streamlit as st
-import yfinance as yf
+# =========================================
+# 🚀 V9 INDIA PRO - SCREENER ENGINE
+# =========================================
+
 import pandas as pd
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
+from bs4 import BeautifulSoup
+import yfinance as yf
+import streamlit as st
+import time
 
 st.set_page_config(layout="wide")
+st.title("🚀 V9 INDIA PRO - NSE 10x Screener (Screener Data)")
 
-st.title("🚀 10X Engine v6 ELITE")
-st.caption("Institutional Scanner | Governance | AI | Smart Money")
-
-# -----------------------------
-# LOAD NSE STOCKS
-# -----------------------------
-@st.cache_data
-def load_nse():
+# ================================
+# 📥 NSE STOCK LIST
+# ================================
+@st.cache_data(ttl=86400)
+def get_nse_stocks():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     df = pd.read_csv(url)
-    return [s + ".NS" for s in df["SYMBOL"].tolist()]
+    df = df[df["SERIES"] == "EQ"]
+    return df["SYMBOL"].tolist()
 
-tickers = load_nse()
-st.success(f"📊 Total NSE Stocks: {len(tickers)}")
 
-# -----------------------------
-# BULK PRICE DATA
-# -----------------------------
-@st.cache_data
-def get_prices(tickers):
-    return yf.download(
-        tickers,
-        period="6mo",
-        group_by="ticker",
-        threads=True,
-        progress=False
-    )
-
-price_data = get_prices(tickers)
-
-# -----------------------------
-# CYCLICAL SECTORS
-# -----------------------------
-CYCLICAL = [
-    "Steel", "Metal", "Sugar", "Cement",
-    "Auto", "Real Estate", "Commodity"
-]
-
-# -----------------------------
-# ANALYSIS FUNCTION
-# -----------------------------
-def analyze(t):
-
+# ================================
+# 🔍 SCRAPE SCREENER
+# ================================
+@st.cache_data(ttl=86400)
+def get_screener_data(symbol):
     try:
-        data = price_data[t]["Close"].dropna()
+        url = f"https://www.screener.in/company/{symbol}/"
+        headers = {"User-Agent": "Mozilla/5.0"}
 
-        if len(data) < 50:
-            return None
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
 
-        # ---------------------
-        # MOMENTUM
-        # ---------------------
-        ret = (data.iloc[-1] / data.iloc[0]) - 1
-        if ret < 0:
-            return None
+        def get_value(label):
+            try:
+                return soup.find("span", string=label).find_next("span").text
+            except:
+                return np.nan
 
-        # ---------------------
-        # VOLATILITY
-        # ---------------------
-        vol = data.pct_change().std()
-
-        # ---------------------
-        # VOLUME (SMART MONEY)
-        # ---------------------
-        hist = price_data[t]
-        avg_vol = hist["Volume"].mean()
-        recent_vol = hist["Volume"].iloc[-5:].mean()
-
-        smart_money = recent_vol / (avg_vol + 1)
-
-        if avg_vol < 200000:
-            return None
-
-        # ---------------------
-        # CIRCUIT FILTER
-        # ---------------------
-        if hist["Close"].pct_change().abs().max() > 0.15:
-            return None
-
-        # ---------------------
-        # BASIC INFO
-        # ---------------------
-        stock = yf.Ticker(t)
-
-        try:
-            info = stock.info
-        except:
-            return None
-
-        name = info.get("longName", "").lower()
-        sector = info.get("sector", "")
-
-        # ---------------------
-        # HOLDING COMPANY FILTER
-        # ---------------------
-        if "invest" in name or "holding" in name:
-            return None
-
-        # ---------------------
-        # CYCLICAL PENALTY
-        # ---------------------
-        cycle_penalty = 15 if any(c in sector for c in CYCLICAL) else 0
-
-        # ---------------------
-        # FUNDAMENTALS
-        # ---------------------
-        pe = info.get("trailingPE", np.random.uniform(10, 40))
-        roe = info.get("returnOnEquity", np.clip(ret, 0.1, 0.3))
-        growth = info.get("revenueGrowth", np.clip(ret, 0.1, 0.4))
-        debt = info.get("debtToEquity", np.clip(vol * 10, 0, 1))
-
-        market_cap = info.get("marketCap", 0)
-
-        if market_cap < 500 * 1e7:
-            return None
-
-        # ---------------------
-        # GOVERNANCE (PROXY)
-        # ---------------------
-        promoter = info.get("heldPercentInsiders", 0.5)
-        pledge = np.random.uniform(0, 0.2)  # proxy (no API)
-
-        if promoter < 0.4:
-            return None
-
-        if pledge > 0.2:
-            return None
-
-        # ---------------------
-        # AI REVERSAL MODEL
-        # ---------------------
-        ma50 = data.rolling(50).mean().iloc[-1]
-        current = data.iloc[-1]
-
-        reversal_risk = (current - ma50) / ma50
-
-        if reversal_risk > 0.25:
-            return None
-
-        # ---------------------
-        # PEG
-        # ---------------------
-        peg = pe / (growth * 100)
-
-        # ---------------------
-        # SCORING
-        # ---------------------
-        score = 0
-
-        # Growth
-        score += 30 if growth > 0.25 else 20 if growth > 0.15 else 10
-
-        # ROE
-        score += 25 if roe > 0.2 else 15 if roe > 0.15 else 5
-
-        # PEG
-        score += 25 if peg < 1 else 15 if peg < 1.5 else 5
-
-        # Debt
-        score += 20 if debt < 0.3 else 10 if debt < 0.6 else 5
-
-        # Smart money boost
-        if smart_money > 1.5:
-            score += 10
-
-        # Stability
-        stability = 1 / (vol + 1e-6)
-        score += stability * 10
-
-        # Apply penalty
-        score -= cycle_penalty
-
-        # ---------------------
-        # TAG
-        # ---------------------
-        if score >= 85:
-            tag = "🔥 Strong"
-        elif score >= 70:
-            tag = "👍 Good"
-        else:
-            tag = "⚠️ Watch"
+        def clean(x):
+            if x is np.nan:
+                return x
+            return float(str(x).replace("%", "").replace(",", "").strip())
 
         return {
-            "Stock": t,
-            "Score": round(score, 2),
-            "Return %": round(ret * 100, 2),
-            "ROE": round(roe * 100, 2),
-            "Growth": round(growth * 100, 2),
-            "PEG": round(peg, 2),
-            "Debt": round(debt, 2),
-            "Promoter": round(promoter * 100, 2),
-            "Smart Money": round(smart_money, 2),
-            "Volatility": round(vol, 4),
-            "Conviction": tag
+            "roe": clean(get_value("ROE")),
+            "roce": clean(get_value("ROCE")),
+            "pe": clean(get_value("P/E")),
+            "debtToEquity": clean(get_value("Debt to equity")),
+            "salesGrowth_3Y": clean(get_value("Sales growth 3Years")),
+            "profitGrowth_3Y": clean(get_value("Profit growth 3Years")),
+            "promoterHolding": clean(get_value("Promoter holding")),
         }
 
     except:
         return None
 
 
-# -----------------------------
-# PARALLEL SCAN
-# -----------------------------
-results = []
-progress = st.progress(0)
+# ================================
+# 📈 PRICE DATA (YFINANCE)
+# ================================
+@st.cache_data(ttl=86400)
+def get_price(symbol):
+    try:
+        stock = yf.Ticker(symbol + ".NS")
+        hist = stock.history(period="1y")
 
-with ThreadPoolExecutor(max_workers=20) as exe:
-    futures = {exe.submit(analyze, t): t for t in tickers}
+        if len(hist) < 200:
+            return None
 
-    for i, f in enumerate(as_completed(futures)):
-        r = f.result()
-        if r:
-            results.append(r)
+        return {
+            "price_6M_return": ((hist["Close"][-1] / hist["Close"][-126]) - 1) * 100,
+            "above_200DMA": hist["Close"][-1] > hist["Close"].rolling(200).mean().iloc[-1]
+        }
 
-        progress.progress((i + 1) / len(tickers))
+    except:
+        return None
 
 
-# -----------------------------
-# OUTPUT
-# -----------------------------
-df = pd.DataFrame(results)
+# ================================
+# 🔄 LOAD STOCKS
+# ================================
+tickers = get_nse_stocks()
 
-st.write(f"✅ Stocks after filters: {len(df)}")
+# ⚠️ KEEP LOW INITIALLY
+MAX_STOCKS = 120
+tickers = tickers[:MAX_STOCKS]
 
-if not df.empty:
-    df = df.sort_values(by="Score", ascending=False)
+data = []
 
-    st.success("🏆 Top Institutional Picks")
-    st.dataframe(df.head(25), use_container_width=True)
+with st.spinner(f"Scanning {len(tickers)} stocks..."):
+    for symbol in tickers:
 
-else:
-    st.error("No strong stocks found.")
+        f = get_screener_data(symbol)
+        p = get_price(symbol)
+
+        if not f or not p:
+            continue
+
+        row = {"symbol": symbol}
+        row.update(f)
+        row.update(p)
+
+        data.append(row)
+
+        time.sleep(1)  # VERY IMPORTANT (avoid blocking)
+
+df = pd.DataFrame(data)
+
+# ================================
+# 🧠 DERIVED METRICS
+# ================================
+df["peg"] = df["pe"] / df["profitGrowth_3Y"]
+
+# ================================
+# 🚫 BASE FILTERS
+# ================================
+df = df[
+    (df["promoterHolding"] > 50) &
+    (df["debtToEquity"] < 1.5)
+]
+
+# ================================
+# 📈 GROWTH FILTER
+# ================================
+df = df[
+    (df["salesGrowth_3Y"] > 10) &
+    (df["profitGrowth_3Y"] > 12)
+]
+
+# ================================
+# ⚖️ QUALITY
+# ================================
+df = df[
+    (df["roe"] > 15) &
+    (df["roce"] > 15)
+]
+
+# ================================
+# 🧠 PEG FILTER
+# ================================
+df = df[(df["peg"] > 0) & (df["peg"] < 1.5)]
+
+# ================================
+# 🔥 MOMENTUM
+# ================================
+df = df[
+    (df["price_6M_return"] > 20) &
+    (df["above_200DMA"] == True)
+]
+
+# ================================
+# 🚨 REMOVE CYCLICAL SPIKES
+# ================================
+df = df[
+    (df["profitGrowth_3Y"] < 80)  # remove extreme spikes
+]
+
+# ================================
+# 🏆 SCORING
+# ================================
+df["score"] = (
+    df["salesGrowth_3Y"] * 0.25 +
+    df["profitGrowth_3Y"] * 0.3 +
+    df["roe"] * 0.2 +
+    df["price_6M_return"] * 0.15 +
+    (1 / df["peg"]) * 10 * 0.1
+)
+
+df = df.sort_values(by="score", ascending=False)
+
+# ================================
+# 📊 OUTPUT
+# ================================
+st.subheader("🏆 Top 10x Candidates (India Pro)")
+st.dataframe(df.head(20))
