@@ -3,8 +3,8 @@ import re
 import os
 
 
-RAW_FILE = "data/fundamentals.csv"
-OUTPUT_FILE = "data/processed_fundamentals.csv"
+RAW_FILE = "data/database.csv"
+OUTPUT_FILE = "data/processed_database.csv"
 
 
 # ---------------------------------
