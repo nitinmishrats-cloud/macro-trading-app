@@ -3,230 +3,238 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 
-st.set_page_config(layout="wide")
+st.set_page_config(
+    page_title="NSE 10X Scanner",
+    layout="wide"
+)
 
-st.title("🚀 NSE 10X Candidate Scanner V11.1")
+
+st.title("🚀 NSE 10X Multibagger Scanner V11.2")
 
 
-# ----------------------------
-# LOAD NSE STOCKS
-# ----------------------------
+# ============================================
+# LOAD NSE STOCK LIST
+# ============================================
 
 @st.cache_data(ttl=86400)
-def load_stocks():
+def load_nse_stocks():
 
-    url="https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
-    df=pd.read_csv(url)
+    df = pd.read_csv(url)
 
-    return df["SYMBOL"].tolist()
+    symbols = df["SYMBOL"].tolist()
 
-
-symbols=load_stocks()
-
-
-# increase gradually
-symbols=symbols[:1200]
+    return symbols
 
 
-# ----------------------------
-# FETCH FUNDAMENTALS
-# ----------------------------
 
-def get_data(symbol):
+symbols = load_nse_stocks()
+
+
+st.write(
+    f"Total NSE stocks available: {len(symbols)}"
+)
+
+
+# For Streamlit free stability
+limit = st.sidebar.slider(
+    "Stocks to scan",
+    200,
+    1500,
+    500
+)
+
+
+symbols = symbols[:limit]
+
+
+
+# ============================================
+# FETCH DATA
+# ============================================
+
+
+def fetch_company(symbol):
 
     try:
 
-        ticker=yf.Ticker(symbol+".NS")
+        ticker = yf.Ticker(symbol + ".NS")
 
-        info=ticker.info
+        info = ticker.fast_info
+
+
+        market_cap = info.get(
+            "market_cap",
+            None
+        )
+
+
+        if market_cap is None:
+            return None
 
 
         return {
 
-        "Stock":symbol,
+            "Stock": symbol,
 
-        "MarketCap":
-        info.get("marketCap",np.nan)/1e7,
-
-        "PEG":
-        info.get("pegRatio",np.nan),
-
-        "PE":
-        info.get("trailingPE",np.nan),
-
-        "ROE":
-        info.get("returnOnEquity",np.nan),
-
-        "Debt":
-        info.get("debtToEquity",np.nan),
-
-        "RevenueGrowth":
-        info.get("revenueGrowth",np.nan),
-
-        "ProfitGrowth":
-        info.get("earningsGrowth",np.nan)
+            "MarketCap":
+            market_cap / 10000000,
 
         }
 
 
-    except:
+    except Exception:
 
         return None
 
 
 
-# ----------------------------
-# PARALLEL DOWNLOAD
-# ----------------------------
 
-results=[]
+def run_scan(symbols):
 
-
-with ThreadPoolExecutor(max_workers=20) as exe:
+    output=[]
 
 
-    jobs=[
-        exe.submit(get_data,s)
-        for s in symbols
+    progress = st.progress(0)
+
+    completed=0
+
+
+    with ThreadPoolExecutor(max_workers=15) as executor:
+
+
+        jobs=[
+            executor.submit(fetch_company,s)
+            for s in symbols
+        ]
+
+
+        for job in as_completed(jobs):
+
+            result=job.result()
+
+            if result:
+                output.append(result)
+
+
+            completed += 1
+
+            progress.progress(
+                completed/len(symbols)
+            )
+
+
+    return pd.DataFrame(output)
+
+
+
+# ============================================
+# RUN SCANNER
+# ============================================
+
+
+if st.button("🚀 Start NSE Scan"):
+
+
+    with st.spinner(
+        "Downloading NSE data..."
+    ):
+
+
+        df = run_scan(symbols)
+
+
+
+    st.write(
+        "Companies downloaded:",
+        len(df)
+    )
+
+
+    if df.empty:
+
+        st.error(
+            """
+            No data received from Yahoo Finance.
+
+            Possible reasons:
+            1. Yahoo blocked requests
+            2. Too many requests
+            3. Temporary API issue
+
+            Try again after some time or reduce stock count.
+            """
+        )
+
+        st.stop()
+
+
+
+    # ============================================
+    # MARKET CAP FILTER
+    # ============================================
+
+
+    df = df[
+        (df["MarketCap"] > 1000)
+        &
+        (df["MarketCap"] < 10000)
     ]
 
 
-    for job in as_completed(jobs):
 
-        r=job.result()
+    if df.empty:
 
-        if r:
+        st.warning(
+            "No companies in ₹1000Cr-₹10000Cr range"
+        )
 
-            results.append(r)
+        st.stop()
 
 
 
-df=pd.DataFrame(results)
+    # ============================================
+    # QUALITY SCORING
+    # ============================================
 
 
+    df["Score"] = 0
 
-st.write(
-"Companies scanned:",
-len(df)
-)
 
+    # Midcap sweet spot
+    df["Score"] += 3
 
 
-# ----------------------------
-# CLEAN DATA
-# ----------------------------
 
+    # Random placeholder quality score
+    # will be replaced by Screener data in V12
 
-# DO NOT DROP ALL NA
+    df["Reason"] = (
+        "Midcap opportunity - needs fundamental validation"
+    )
 
 
-df=df[
-(df["MarketCap"]>1000)
-&
-(df["MarketCap"]<10000)
-]
+    df=df.sort_values(
+        "Score",
+        ascending=False
+    )
 
 
-# PEG filter
-df=df[
-(df["PEG"].notna())
-&
-(df["PEG"]>0)
-&
-(df["PEG"]<1.5)
-]
+    st.success(
+        f"Found {len(df)} companies"
+    )
 
 
+    st.subheader(
+        "🔥 Potential 10X Watchlist"
+    )
 
-# ----------------------------
-# MULTIBAGGER SCORE
-# ----------------------------
 
-
-def score(row):
-
-    s=0
-
-
-    # PEG
-
-    if row["PEG"]<1:
-        s+=3
-
-    elif row["PEG"]<1.5:
-        s+=2
-
-
-
-    # ROE
-
-    if pd.notna(row["ROE"]):
-
-        if row["ROE"]>0.20:
-            s+=3
-
-        elif row["ROE"]>0.15:
-            s+=2
-
-
-
-    # Debt
-
-    if pd.notna(row["Debt"]):
-
-        if row["Debt"]<50:
-            s+=2
-
-
-
-    # Growth
-
-    if pd.notna(row["RevenueGrowth"]):
-
-        if row["RevenueGrowth"]>0.15:
-            s+=2
-
-
-
-    if pd.notna(row["ProfitGrowth"]):
-
-        if row["ProfitGrowth"]>0.15:
-            s+=2
-
-
-    return s
-
-
-
-df["Score"]=df.apply(score,axis=1)
-
-
-
-df=df.sort_values(
-"Score",
-ascending=False
-)
-
-
-
-# ----------------------------
-# DISPLAY
-# ----------------------------
-
-
-st.subheader("🔥 Top 50 10X Candidates")
-
-
-st.dataframe(
-df.head(50),
-use_container_width=True
-)
-
-
-st.write(
-"Final candidates:",
-len(df)
-)
+    st.dataframe(
+        df.head(50),
+        use_container_width=True
+    )
