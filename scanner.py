@@ -81,7 +81,7 @@ def scrape_screener(symbol):
             ),
 
             "Raw":
-            text[:5000]
+            text
 
         }
 
