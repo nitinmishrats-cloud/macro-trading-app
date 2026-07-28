@@ -3,27 +3,29 @@ import re
 import os
 
 
-RAW_FILE = "data/database.csv"
+INPUT_FILE = "data/database.csv"
 OUTPUT_FILE = "data/processed_database.csv"
 
 
-# ---------------------------------
-# Extract numbers from text
-# ---------------------------------
+# -------------------------------------
+# Extract value from Screener text
+# -------------------------------------
 
-def extract_number(pattern, text):
+def get_value(text, keyword):
 
     try:
 
-        result = re.search(
+        pattern = keyword + r"\s*([\d\.]+)"
+
+        match = re.search(
             pattern,
             text,
             re.IGNORECASE
         )
 
-        if result:
+        if match:
             return float(
-                result.group(1)
+                match.group(1)
             )
 
     except:
@@ -33,13 +35,13 @@ def extract_number(pattern, text):
 
 
 
-# ---------------------------------
-# Parse one company
-# ---------------------------------
+# -------------------------------------
+# Parse company
+# -------------------------------------
 
 def parse_company(row):
 
-    text = row["Raw"]
+    text = str(row["Raw"])
 
 
     data = {
@@ -52,51 +54,45 @@ def parse_company(row):
         row["Date"],
 
 
-        # Market Cap
         "MarketCap":
-        extract_number(
-            r"Market Cap\s*₹?\s*([\d,.]+)",
-            text
+        get_value(
+            text,
+            "Market Cap"
         ),
 
 
-        # PE
         "PE":
-        extract_number(
-            r"P/E\s*([\d,.]+)",
-            text
+        get_value(
+            text,
+            "Stock P/E"
         ),
 
 
-        # ROCE
         "ROCE":
-        extract_number(
-            r"ROCE\s*([\d,.]+)",
-            text
+        get_value(
+            text,
+            "ROCE"
         ),
 
 
-        # Debt
         "Debt":
-        extract_number(
-            r"Debt\s*([\d,.]+)",
-            text
+        get_value(
+            text,
+            "Debt"
         ),
 
 
-        # Promoter
         "Promoter":
-        extract_number(
-            r"Promoter Holding\s*([\d,.]+)",
-            text
+        get_value(
+            text,
+            "Promoter holding"
         ),
 
 
-        # Pledge
         "Pledge":
-        extract_number(
-            r"Pledged\s*([\d,.]+)",
-            text
+        get_value(
+            text,
+            "Pledged"
         )
 
     }
@@ -106,11 +102,11 @@ def parse_company(row):
 
 
 
-# ---------------------------------
-# PEG calculation
-# ---------------------------------
+# -------------------------------------
+# Quality Score
+# -------------------------------------
 
-def calculate_score(row):
+def quality_score(row):
 
     score = 0
 
@@ -119,10 +115,10 @@ def calculate_score(row):
 
     if pd.notna(row["ROCE"]):
 
-        if row["ROCE"] > 25:
+        if row["ROCE"] >= 25:
             score += 3
 
-        elif row["ROCE"] > 15:
+        elif row["ROCE"] >= 15:
             score += 2
 
 
@@ -131,7 +127,10 @@ def calculate_score(row):
 
     if pd.notna(row["Debt"]):
 
-        if row["Debt"] < 0.5:
+        if row["Debt"] == 0:
+            score += 3
+
+        elif row["Debt"] < 1:
             score += 2
 
 
@@ -140,8 +139,11 @@ def calculate_score(row):
 
     if pd.notna(row["Promoter"]):
 
-        if row["Promoter"] > 50:
+        if row["Promoter"] >= 50:
             score += 2
+
+        elif row["Promoter"] >= 35:
+            score += 1
 
 
 
@@ -157,63 +159,76 @@ def calculate_score(row):
 
 
 
-# ---------------------------------
-# MAIN PROCESS
-# ---------------------------------
+# -------------------------------------
+# Process Database
+# -------------------------------------
 
 def process_data():
 
 
-    if not os.path.exists(RAW_FILE):
+    if not os.path.exists(INPUT_FILE):
 
         return None
 
 
 
     raw = pd.read_csv(
-        RAW_FILE
+        INPUT_FILE
     )
 
 
-    processed=[]
+    companies=[]
 
 
     for _,row in raw.iterrows():
 
-        processed.append(
+        companies.append(
             parse_company(row)
         )
 
 
+
     df=pd.DataFrame(
-        processed
+        companies
     )
 
 
+    # Calculate score
+
     df["Quality Score"] = (
         df.apply(
-            calculate_score,
+            quality_score,
             axis=1
         )
     )
 
 
-    # Governance flags
+    # Risk classification
 
-    df["Risk"] = "LOW"
+    df["Governance Risk"]="LOW"
+
 
 
     df.loc[
         df["Pledge"] > 10,
-        "Risk"
-    ] = "HIGH"
+        "Governance Risk"
+    ]="HIGH"
+
 
 
     df.loc[
-        df["Debt"] > 1,
-        "Risk"
-    ] = "MEDIUM"
+        df["Debt"] > 2,
+        "Governance Risk"
+    ]="MEDIUM"
 
+
+
+    # Save
+
+    os.makedirs(
+        "data",
+        exist_ok=True
+    )
 
 
     df.to_csv(
