@@ -4,7 +4,7 @@ import urllib.parse
 import os
 
 
-INPUT_FILE = "data/processed_fundamentals.csv"
+INPUT_FILE = "data/processed_database.csv"
 OUTPUT_FILE = "data/final_candidates.csv"
 
 
