@@ -1,209 +1,183 @@
-# =========================================
-# 🚀 V9 INDIA PRO - STABLE SCREENER ENGINE
-# =========================================
-
+import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
-from bs4 import BeautifulSoup
 import yfinance as yf
-import streamlit as st
-import time
+import ta
+from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(layout="wide")
-st.title("🚀 V9 INDIA PRO - NSE 10x Screener (Stable)")
+st.title("🚀 V9 NSE Institutional Scanner")
 
-# ================================
-# 📥 NSE STOCK LIST (FIXED)
-# ================================
+# ==============================
+# LOAD NSE STOCK LIST
+# ==============================
 @st.cache_data(ttl=86400)
-def get_nse_stocks():
+def load_nse_stocks():
+    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+    df = pd.read_csv(url)
+    symbols = df['SYMBOL'].tolist()
+    return [s + ".NS" for s in symbols]
+
+# ==============================
+# BULK DATA FETCH
+# ==============================
+@st.cache_data(ttl=3600)
+def fetch_data(symbols):
+    return yf.download(
+        tickers=symbols,
+        period="1y",
+        interval="1d",
+        group_by='ticker',
+        threads=True
+    )
+
+# ==============================
+# ANALYSIS ENGINE (V9)
+# ==============================
+def analyze_stock(symbol, data):
     try:
-        url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-        df = pd.read_csv(url)
+        df = data[symbol].dropna()
 
-        # ✅ CLEAN COLUMN NAMES (CRITICAL FIX)
-        df.columns = df.columns.str.strip().str.upper()
-
-        # ✅ SAFE FILTER
-        if "SERIES" in df.columns:
-            df = df[df["SERIES"] == "EQ"]
-
-        symbols = df["SYMBOL"].dropna().tolist()
-
-        return symbols
-
-    except Exception as e:
-        st.error(f"NSE fetch failed: {e}")
-        # fallback
-        return ["RELIANCE", "TCS", "INFY", "HDFCBANK"]
-
-
-# ================================
-# 🔍 SCREENER SCRAPER (ROBUST)
-# ================================
-@st.cache_data(ttl=86400)
-def get_screener_data(symbol):
-    try:
-        url = f"https://www.screener.in/company/{symbol}/"
-        headers = {"User-Agent": "Mozilla/5.0"}
-
-        r = requests.get(url, headers=headers, timeout=10)
-
-        if r.status_code != 200:
+        if len(df) < 120:
             return None
 
-        soup = BeautifulSoup(r.text, "html.parser")
+        close = df['Close']
+        high = df['High']
+        low = df['Low']
+        volume_series = df['Volume']
 
-        def get_value(label):
-            try:
-                x = soup.find("span", string=label)
-                if x:
-                    return x.find_next("span").text
-                return np.nan
-            except:
-                return np.nan
+        price = close.iloc[-1]
+        volume = volume_series.iloc[-1]
+        avg_vol = volume_series.rolling(20).mean().iloc[-1]
 
-        def clean(x):
-            try:
-                return float(str(x).replace("%", "").replace(",", "").strip())
-            except:
-                return np.nan
+        # Liquidity filter
+        if volume < 200000 or price < 20:
+            return None
+
+        # Indicators
+        rsi = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
+        sma50 = close.rolling(50).mean().iloc[-1]
+        sma200 = close.rolling(200).mean().iloc[-1]
+
+        high_50 = high.rolling(50).max().iloc[-1]
+        low_50 = low.rolling(50).min().iloc[-1]
+
+        drawdown = (price - high_50) / high_50
+
+        score = 0
+        signals = []
+
+        # =====================
+        # TREND + STRUCTURE
+        # =====================
+        if price > sma50:
+            score += 1
+            signals.append("Above 50DMA")
+
+        if sma50 > sma200:
+            score += 1
+            signals.append("Bullish Trend")
+
+        # =====================
+        # REVERSAL ZONE
+        # =====================
+        if rsi < 40:
+            score += 1
+            signals.append("Oversold")
+
+        if price < sma50 * 1.05:
+            score += 1
+            signals.append("Near Support")
+
+        # =====================
+        # VOLUME ACCUMULATION
+        # =====================
+        if volume > 1.5 * avg_vol:
+            score += 2
+            signals.append("Volume Spike")
+
+        # =====================
+        # BREAKOUT SETUP
+        # =====================
+        if price >= high_50 * 0.95:
+            score += 2
+            signals.append("Near Breakout")
+
+        # =====================
+        # DRAWDOWN RECOVERY
+        # =====================
+        if drawdown > -0.25:
+            score += 1
+            signals.append("Strong Structure")
+
+        # =====================
+        # TREND SHIFT
+        # =====================
+        if close.iloc[-1] > sma50 and close.iloc[-10] < sma50:
+            score += 2
+            signals.append("Fresh Breakout")
 
         return {
-            "roe": clean(get_value("ROE")),
-            "roce": clean(get_value("ROCE")),
-            "pe": clean(get_value("P/E")),
-            "debtToEquity": clean(get_value("Debt to equity")),
-            "salesGrowth_3Y": clean(get_value("Sales growth 3Years")),
-            "profitGrowth_3Y": clean(get_value("Profit growth 3Years")),
-            "promoterHolding": clean(get_value("Promoter holding")),
+            "Stock": symbol.replace(".NS", ""),
+            "Price": round(price, 2),
+            "RSI": round(rsi, 1),
+            "Volume": int(volume),
+            "Score": score,
+            "Signals": ", ".join(signals)
         }
 
     except:
         return None
 
+# ==============================
+# PARALLEL SCAN
+# ==============================
+def run_scan(symbols, data):
+    def task(symbol):
+        return analyze_stock(symbol, data)
 
-# ================================
-# 📈 PRICE DATA
-# ================================
-@st.cache_data(ttl=86400)
-def get_price(symbol):
-    try:
-        stock = yf.Ticker(symbol + ".NS")
-        hist = stock.history(period="1y")
+    with ThreadPoolExecutor(max_workers=25) as executor:
+        results = list(executor.map(task, symbols))
 
-        if hist.empty or len(hist) < 200:
-            return None
+    results = [r for r in results if r is not None]
+    return pd.DataFrame(results)
 
-        return {
-            "price_6M_return": ((hist["Close"].iloc[-1] / hist["Close"].iloc[-126]) - 1) * 100,
-            "above_200DMA": hist["Close"].iloc[-1] > hist["Close"].rolling(200).mean().iloc[-1]
-        }
+# ==============================
+# UI CONTROLS
+# ==============================
+st.sidebar.header("⚙️ Settings")
 
-    except:
-        return None
+max_stocks = st.sidebar.slider("Max Stocks to Scan", 500, 2000, 1200)
+min_score = st.sidebar.slider("Minimum Score", 1, 10, 5)
 
+# ==============================
+# MAIN EXECUTION
+# ==============================
+if st.button("🚀 Run Full Scan"):
 
-# ================================
-# 🔄 LOAD STOCKS
-# ================================
-tickers = get_nse_stocks()
+    with st.spinner("Loading stocks..."):
+        symbols = load_nse_stocks()
 
-# ⚠️ LIMIT FOR SPEED
-MAX_STOCKS = 120
-tickers = tickers[:MAX_STOCKS]
+    symbols = symbols[:max_stocks]
 
-data = []
+    st.write(f"Scanning {len(symbols)} stocks...")
 
-with st.spinner(f"Scanning {len(tickers)} stocks..."):
-    for symbol in tickers:
+    with st.spinner("Fetching data..."):
+        data = fetch_data(symbols)
 
-        f = get_screener_data(symbol)
-        p = get_price(symbol)
+    with st.spinner("Analyzing..."):
+        df = run_scan(symbols, data)
 
-        if not f or not p:
-            continue
+    if df.empty:
+        st.error("No results")
+    else:
+        df = df.sort_values(by="Score", ascending=False)
+        df = df[df["Score"] >= min_score]
 
-        row = {"symbol": symbol}
-        row.update(f)
-        row.update(p)
+        st.success(f"Found {len(df)} strong candidates")
 
-        data.append(row)
+        st.subheader("🏆 Top Opportunities")
+        st.dataframe(df.head(25), use_container_width=True)
 
-        time.sleep(1)  # IMPORTANT (avoid blocking)
-
-df = pd.DataFrame(data)
-
-# ================================
-# 🛑 HANDLE EMPTY DATA
-# ================================
-if df.empty:
-    st.warning("No data found. Try reducing filters or increasing stock limit.")
-    st.stop()
-
-# ================================
-# 🧠 DERIVED METRICS
-# ================================
-df["peg"] = df["pe"] / df["profitGrowth_3Y"]
-
-# ================================
-# 🚫 BASE FILTERS
-# ================================
-df = df[
-    (df["promoterHolding"] > 50) &
-    (df["debtToEquity"] < 1.5)
-]
-
-# ================================
-# 📈 GROWTH FILTER
-# ================================
-df = df[
-    (df["salesGrowth_3Y"] > 10) &
-    (df["profitGrowth_3Y"] > 12)
-]
-
-# ================================
-# ⚖️ QUALITY
-# ================================
-df = df[
-    (df["roe"] > 15) &
-    (df["roce"] > 15)
-]
-
-# ================================
-# 🧠 PEG FILTER
-# ================================
-df = df[(df["peg"] > 0) & (df["peg"] < 1.5)]
-
-# ================================
-# 🔥 MOMENTUM
-# ================================
-df = df[
-    (df["price_6M_return"] > 20) &
-    (df["above_200DMA"] == True)
-]
-
-# ================================
-# 🚨 REMOVE CYCLICAL SPIKES
-# ================================
-df = df[df["profitGrowth_3Y"] < 80]
-
-# ================================
-# 🏆 SCORING
-# ================================
-df["score"] = (
-    df["salesGrowth_3Y"] * 0.25 +
-    df["profitGrowth_3Y"] * 0.3 +
-    df["roe"] * 0.2 +
-    df["price_6M_return"] * 0.15 +
-    (1 / df["peg"]) * 10 * 0.1
-)
-
-df = df.sort_values(by="score", ascending=False)
-
-# ================================
-# 📊 OUTPUT
-# ================================
-st.subheader("🏆 Top 10x Candidates")
-st.dataframe(df.head(20))
+        st.subheader("📊 Full Results")
+        st.dataframe(df, use_container_width=True)
