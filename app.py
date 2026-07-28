@@ -1,5 +1,5 @@
 # =========================================
-# 🚀 V9 INDIA PRO - SCREENER ENGINE
+# 🚀 V9 INDIA PRO - STABLE SCREENER ENGINE
 # =========================================
 
 import pandas as pd
@@ -11,21 +11,36 @@ import streamlit as st
 import time
 
 st.set_page_config(layout="wide")
-st.title("🚀 V9 INDIA PRO - NSE 10x Screener (Screener Data)")
+st.title("🚀 V9 INDIA PRO - NSE 10x Screener (Stable)")
 
 # ================================
-# 📥 NSE STOCK LIST
+# 📥 NSE STOCK LIST (FIXED)
 # ================================
 @st.cache_data(ttl=86400)
 def get_nse_stocks():
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    df = pd.read_csv(url)
-    df = df[df["SERIES"] == "EQ"]
-    return df["SYMBOL"].tolist()
+    try:
+        url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+        df = pd.read_csv(url)
+
+        # ✅ CLEAN COLUMN NAMES (CRITICAL FIX)
+        df.columns = df.columns.str.strip().str.upper()
+
+        # ✅ SAFE FILTER
+        if "SERIES" in df.columns:
+            df = df[df["SERIES"] == "EQ"]
+
+        symbols = df["SYMBOL"].dropna().tolist()
+
+        return symbols
+
+    except Exception as e:
+        st.error(f"NSE fetch failed: {e}")
+        # fallback
+        return ["RELIANCE", "TCS", "INFY", "HDFCBANK"]
 
 
 # ================================
-# 🔍 SCRAPE SCREENER
+# 🔍 SCREENER SCRAPER (ROBUST)
 # ================================
 @st.cache_data(ttl=86400)
 def get_screener_data(symbol):
@@ -34,18 +49,26 @@ def get_screener_data(symbol):
         headers = {"User-Agent": "Mozilla/5.0"}
 
         r = requests.get(url, headers=headers, timeout=10)
+
+        if r.status_code != 200:
+            return None
+
         soup = BeautifulSoup(r.text, "html.parser")
 
         def get_value(label):
             try:
-                return soup.find("span", string=label).find_next("span").text
+                x = soup.find("span", string=label)
+                if x:
+                    return x.find_next("span").text
+                return np.nan
             except:
                 return np.nan
 
         def clean(x):
-            if x is np.nan:
-                return x
-            return float(str(x).replace("%", "").replace(",", "").strip())
+            try:
+                return float(str(x).replace("%", "").replace(",", "").strip())
+            except:
+                return np.nan
 
         return {
             "roe": clean(get_value("ROE")),
@@ -62,7 +85,7 @@ def get_screener_data(symbol):
 
 
 # ================================
-# 📈 PRICE DATA (YFINANCE)
+# 📈 PRICE DATA
 # ================================
 @st.cache_data(ttl=86400)
 def get_price(symbol):
@@ -70,12 +93,12 @@ def get_price(symbol):
         stock = yf.Ticker(symbol + ".NS")
         hist = stock.history(period="1y")
 
-        if len(hist) < 200:
+        if hist.empty or len(hist) < 200:
             return None
 
         return {
-            "price_6M_return": ((hist["Close"][-1] / hist["Close"][-126]) - 1) * 100,
-            "above_200DMA": hist["Close"][-1] > hist["Close"].rolling(200).mean().iloc[-1]
+            "price_6M_return": ((hist["Close"].iloc[-1] / hist["Close"].iloc[-126]) - 1) * 100,
+            "above_200DMA": hist["Close"].iloc[-1] > hist["Close"].rolling(200).mean().iloc[-1]
         }
 
     except:
@@ -87,7 +110,7 @@ def get_price(symbol):
 # ================================
 tickers = get_nse_stocks()
 
-# ⚠️ KEEP LOW INITIALLY
+# ⚠️ LIMIT FOR SPEED
 MAX_STOCKS = 120
 tickers = tickers[:MAX_STOCKS]
 
@@ -108,9 +131,16 @@ with st.spinner(f"Scanning {len(tickers)} stocks..."):
 
         data.append(row)
 
-        time.sleep(1)  # VERY IMPORTANT (avoid blocking)
+        time.sleep(1)  # IMPORTANT (avoid blocking)
 
 df = pd.DataFrame(data)
+
+# ================================
+# 🛑 HANDLE EMPTY DATA
+# ================================
+if df.empty:
+    st.warning("No data found. Try reducing filters or increasing stock limit.")
+    st.stop()
 
 # ================================
 # 🧠 DERIVED METRICS
@@ -157,9 +187,7 @@ df = df[
 # ================================
 # 🚨 REMOVE CYCLICAL SPIKES
 # ================================
-df = df[
-    (df["profitGrowth_3Y"] < 80)  # remove extreme spikes
-]
+df = df[df["profitGrowth_3Y"] < 80]
 
 # ================================
 # 🏆 SCORING
@@ -177,5 +205,5 @@ df = df.sort_values(by="score", ascending=False)
 # ================================
 # 📊 OUTPUT
 # ================================
-st.subheader("🏆 Top 10x Candidates (India Pro)")
+st.subheader("🏆 Top 10x Candidates")
 st.dataframe(df.head(20))
