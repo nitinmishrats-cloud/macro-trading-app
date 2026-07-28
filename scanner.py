@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 
-DATA_FILE = "data/fundamentals.csv"
+DATA_FILE = "data/database.csv"
 
 
 # -----------------------------
