@@ -1,5 +1,4 @@
 import pandas as pd
-import re
 import os
 
 
@@ -7,161 +6,47 @@ INPUT_FILE = "data/database.csv"
 OUTPUT_FILE = "data/processed_database.csv"
 
 
-# -------------------------------------
-# Extract value from Screener text
-# -------------------------------------
-
-def get_value(text, keyword):
-
-    try:
-
-        pattern = keyword + r"\s*([\d\.]+)"
-
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE
-        )
-
-        if match:
-            return float(
-                match.group(1)
-            )
-
-    except:
-        pass
-
-    return None
-
-
-
-# -------------------------------------
-# Parse company
-# -------------------------------------
-
-def parse_company(row):
-
-    text = str(row["Raw"])
-
-
-    data = {
-
-        "Symbol":
-        row["Symbol"],
-
-
-        "Date":
-        row["Date"],
-
-
-        "MarketCap":
-        get_value(
-            text,
-            "Market Cap"
-        ),
-
-
-        "PE":
-        get_value(
-            text,
-            "Stock P/E"
-        ),
-
-
-        "ROCE":
-        get_value(
-            text,
-            "ROCE"
-        ),
-
-
-        "Debt":
-        get_value(
-            text,
-            "Debt"
-        ),
-
-
-        "Promoter":
-        get_value(
-            text,
-            "Promoter holding"
-        ),
-
-
-        "Pledge":
-        get_value(
-            text,
-            "Pledged"
-        )
-
-    }
-
-
-    return data
-
-
-
-# -------------------------------------
-# Quality Score
-# -------------------------------------
-
-def quality_score(row):
+def calculate_quality_score(row):
 
     score = 0
 
 
     # ROCE
+    if pd.notna(row["ROCE (%)"]):
 
-    if pd.notna(row["ROCE"]):
-
-        if row["ROCE"] >= 25:
+        if row["ROCE (%)"] >= 25:
             score += 3
 
-        elif row["ROCE"] >= 15:
+        elif row["ROCE (%)"] >= 15:
             score += 2
 
 
 
-    # Debt
+    # ROE
+    if pd.notna(row["ROE (%)"]):
 
-    if pd.notna(row["Debt"]):
-
-        if row["Debt"] == 0:
-            score += 3
-
-        elif row["Debt"] < 1:
+        if row["ROE (%)"] >= 20:
             score += 2
 
-
-
-    # Promoter
-
-    if pd.notna(row["Promoter"]):
-
-        if row["Promoter"] >= 50:
-            score += 2
-
-        elif row["Promoter"] >= 35:
+        elif row["ROE (%)"] >= 12:
             score += 1
 
 
 
-    # Pledge
+    # Valuation
+    if pd.notna(row["Stock P/E"]):
 
-    if pd.notna(row["Pledge"]):
-
-        if row["Pledge"] == 0:
+        if row["Stock P/E"] < 25:
             score += 2
+
+        elif row["Stock P/E"] < 40:
+            score += 1
+
 
 
     return score
 
 
-
-# -------------------------------------
-# Process Database
-# -------------------------------------
 
 def process_data():
 
@@ -172,63 +57,62 @@ def process_data():
 
 
 
-    raw = pd.read_csv(
+    df = pd.read_csv(
         INPUT_FILE
     )
 
 
-    companies=[]
+
+    # Convert N/A to numeric
+
+    numeric_columns = [
+
+        "Market Cap (Cr)",
+        "Stock P/E",
+        "ROCE (%)",
+        "ROE (%)"
+
+    ]
 
 
-    for _,row in raw.iterrows():
+    for col in numeric_columns:
 
-        companies.append(
-            parse_company(row)
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce"
         )
 
 
 
-    df=pd.DataFrame(
-        companies
+    # Your 10X sweet spot
+
+    df = df[
+        (df["Market Cap (Cr)"] >= 1000)
+        &
+        (df["Market Cap (Cr)"] <= 10000)
+    ]
+
+
+
+    # Quality score
+
+    df["Quality Score"] = df.apply(
+        calculate_quality_score,
+        axis=1
     )
 
 
-    # Calculate score
 
-    df["Quality Score"] = (
-        df.apply(
-            quality_score,
-            axis=1
-        )
-    )
+    # Basic risk flags
 
-
-    # Risk classification
-
-    df["Governance Risk"]="LOW"
-
+    df["Risk"] = "LOW"
 
 
     df.loc[
-        df["Pledge"] > 10,
-        "Governance Risk"
-    ]="HIGH"
+        df["ROCE (%)"] < 10,
+        "Risk"
+    ] = "MEDIUM"
 
-
-
-    df.loc[
-        df["Debt"] > 2,
-        "Governance Risk"
-    ]="MEDIUM"
-
-
-
-    # Save
-
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
 
 
     df.to_csv(
