@@ -1,91 +1,232 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 import numpy as np
+import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.title("🚀 NSE Multibagger Scanner V11 (Governance + News Filter)")
 
-# -------- LOAD NSE STOCK LIST --------
-@st.cache_data
-def load_nse_stocks():
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    df = pd.read_csv(url)
+st.set_page_config(layout="wide")
+
+st.title("🚀 NSE 10X Candidate Scanner V11.1")
+
+
+# ----------------------------
+# LOAD NSE STOCKS
+# ----------------------------
+
+@st.cache_data(ttl=86400)
+def load_stocks():
+
+    url="https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+
+    df=pd.read_csv(url)
+
     return df["SYMBOL"].tolist()
 
-symbols = load_nse_stocks()
-symbols = symbols[:800]  # stability limit
 
-# -------- FETCH DATA --------
-def fetch_stock(symbol):
+symbols=load_stocks()
+
+
+# increase gradually
+symbols=symbols[:1200]
+
+
+# ----------------------------
+# FETCH FUNDAMENTALS
+# ----------------------------
+
+def get_data(symbol):
+
     try:
-        stock = yf.Ticker(symbol + ".NS")
-        info = stock.info
+
+        ticker=yf.Ticker(symbol+".NS")
+
+        info=ticker.info
+
 
         return {
-            "symbol": symbol,
-            "market_cap": info.get("marketCap", np.nan) / 1e7,
-            "pe": info.get("trailingPE", np.nan),
-            "peg": info.get("pegRatio", np.nan),
-            "debt_to_equity": info.get("debtToEquity", np.nan),
-            "roe": info.get("returnOnEquity", np.nan),
-            "revenue_growth": info.get("revenueGrowth", np.nan),
-            "profit_growth": info.get("earningsGrowth", np.nan),
+
+        "Stock":symbol,
+
+        "MarketCap":
+        info.get("marketCap",np.nan)/1e7,
+
+        "PEG":
+        info.get("pegRatio",np.nan),
+
+        "PE":
+        info.get("trailingPE",np.nan),
+
+        "ROE":
+        info.get("returnOnEquity",np.nan),
+
+        "Debt":
+        info.get("debtToEquity",np.nan),
+
+        "RevenueGrowth":
+        info.get("revenueGrowth",np.nan),
+
+        "ProfitGrowth":
+        info.get("earningsGrowth",np.nan)
+
         }
+
+
     except:
+
         return None
 
-# -------- MULTITHREAD --------
-data = []
-with ThreadPoolExecutor(max_workers=20) as executor:
-    futures = [executor.submit(fetch_stock, s) for s in symbols]
 
-    for future in as_completed(futures):
-        res = future.result()
-        if res:
-            data.append(res)
 
-df = pd.DataFrame(data)
-df = df.dropna()
+# ----------------------------
+# PARALLEL DOWNLOAD
+# ----------------------------
 
-# -------- STAGE 1: GOVERNANCE FILTER --------
-df = df[
-    (df["debt_to_equity"] < 0.6) &   # low debt
-    (df["roe"] > 0.15)               # efficient business
-]
+results=[]
 
-# -------- STAGE 2: CORE MULTIBAGGER FILTER --------
-df = df[
-    (df["market_cap"] > 1000) & (df["market_cap"] < 10000) &
-    (df["peg"] > 0) & (df["peg"] < 1)
-]
 
-# -------- STAGE 3: NEWS RISK FILTER (PROXY) --------
-df = df[
-    (df["revenue_growth"] > 0) &
-    (df["profit_growth"] > 0)
-]
+with ThreadPoolExecutor(max_workers=20) as exe:
 
-# -------- RISK FLAGS --------
-df["risk_flag"] = np.where(
-    (df["debt_to_equity"] > 0.5) |
-    (df["roe"] < 0.18),
-    "⚠️ Medium Risk",
-    "✅ Low Risk"
+
+    jobs=[
+        exe.submit(get_data,s)
+        for s in symbols
+    ]
+
+
+    for job in as_completed(jobs):
+
+        r=job.result()
+
+        if r:
+
+            results.append(r)
+
+
+
+df=pd.DataFrame(results)
+
+
+
+st.write(
+"Companies scanned:",
+len(df)
 )
 
-# -------- SCORE SYSTEM --------
-df["score"] = (
-    df["roe"] * 0.3 +
-    df["revenue_growth"] * 0.25 +
-    df["profit_growth"] * 0.25 +
-    (1 - df["peg"]) * 0.2
+
+
+# ----------------------------
+# CLEAN DATA
+# ----------------------------
+
+
+# DO NOT DROP ALL NA
+
+
+df=df[
+(df["MarketCap"]>1000)
+&
+(df["MarketCap"]<10000)
+]
+
+
+# PEG filter
+df=df[
+(df["PEG"].notna())
+&
+(df["PEG"]>0)
+&
+(df["PEG"]<1.5)
+]
+
+
+
+# ----------------------------
+# MULTIBAGGER SCORE
+# ----------------------------
+
+
+def score(row):
+
+    s=0
+
+
+    # PEG
+
+    if row["PEG"]<1:
+        s+=3
+
+    elif row["PEG"]<1.5:
+        s+=2
+
+
+
+    # ROE
+
+    if pd.notna(row["ROE"]):
+
+        if row["ROE"]>0.20:
+            s+=3
+
+        elif row["ROE"]>0.15:
+            s+=2
+
+
+
+    # Debt
+
+    if pd.notna(row["Debt"]):
+
+        if row["Debt"]<50:
+            s+=2
+
+
+
+    # Growth
+
+    if pd.notna(row["RevenueGrowth"]):
+
+        if row["RevenueGrowth"]>0.15:
+            s+=2
+
+
+
+    if pd.notna(row["ProfitGrowth"]):
+
+        if row["ProfitGrowth"]>0.15:
+            s+=2
+
+
+    return s
+
+
+
+df["Score"]=df.apply(score,axis=1)
+
+
+
+df=df.sort_values(
+"Score",
+ascending=False
 )
 
-df = df.sort_values(by="score", ascending=False)
 
-# -------- OUTPUT --------
-st.write("### 🔥 Top Multibagger Candidates (V11)")
-st.dataframe(df.head(25))
 
-st.write(f"Total stocks found: {len(df)}")
+# ----------------------------
+# DISPLAY
+# ----------------------------
+
+
+st.subheader("🔥 Top 50 10X Candidates")
+
+
+st.dataframe(
+df.head(50),
+use_container_width=True
+)
+
+
+st.write(
+"Final candidates:",
+len(df)
+)
