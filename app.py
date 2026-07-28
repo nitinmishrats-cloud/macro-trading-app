@@ -42,12 +42,7 @@ st.sidebar.header(
 )
 
 
-batch_size = st.sidebar.slider(
-    "Stocks scanned today",
-    50,
-    500,
-    100
-)
+batch_size = 1
 
 
 min_score = st.sidebar.slider(
@@ -77,6 +72,14 @@ if st.button(
             batch_size
         )
 
+st.write("Columns:")
+st.write(raw.columns)
+
+st.write("Sample raw data:")
+
+st.write(
+    raw.head(1)["Raw"].values[0][:2000]
+)
 
     st.success(
         f"Collected {len(raw)} companies"
