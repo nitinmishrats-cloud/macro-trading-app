@@ -1,14 +1,9 @@
 import streamlit as st
 import pandas as pd
-import os
 
 from scanner import run_batch
 from fundamental_parser import process_data
 
-
-# -----------------------------
-# Page Setup
-# -----------------------------
 
 st.set_page_config(
     page_title="NSE 10X Scanner V12",
@@ -21,13 +16,13 @@ st.title("🚀 NSE 10X Multibagger Scanner V12")
 
 st.write(
 """
-Scanner objective:
+Automatic NSE opportunity scanner
 
-Find companies with:
+Filters:
 - Market Cap ₹1,000 Cr - ₹10,000 Cr
-- Good ROCE / ROE
-- Reasonable valuation
-- Potential long-term growth
+- ROCE / ROE quality
+- Valuation check
+- Long term multibagger screening
 """
 )
 
@@ -36,33 +31,25 @@ Find companies with:
 # Sidebar
 # -----------------------------
 
-st.sidebar.header(
-    "Scanner Settings"
-)
-
-
 batch_size = st.sidebar.slider(
     "Stocks to scan today",
-    min_value=1,
-    max_value=500,
-    value=50
+    1,
+    500,
+    50
 )
 
 
 
 # -----------------------------
-# Run Scanner
+# Run Scan
 # -----------------------------
 
-if st.button(
-    "🚀 Run Daily Scan"
-):
+if st.button("🚀 Run Daily Scan"):
 
 
     with st.spinner(
         "Collecting Screener data..."
     ):
-
 
         raw = run_batch(
             batch_size
@@ -75,9 +62,8 @@ if st.button(
 
 
     with st.spinner(
-        "Running fundamental filters..."
+        "Processing fundamentals..."
     ):
-
 
         df = process_data()
 
@@ -85,9 +71,8 @@ if st.button(
 
     if df is None or len(df)==0:
 
-
         st.error(
-            "No stocks passed the filters"
+            "No stocks passed filters"
         )
 
         st.stop()
@@ -99,19 +84,20 @@ if st.button(
     )
 
 
+    # Save in session
+
+    st.session_state["results"] = df
+
+
 
 # -----------------------------
-# Display Existing Results
+# Show Results
 # -----------------------------
 
-if os.path.exists(
-    "data/processed_database.csv"
-):
+if "results" in st.session_state:
 
 
-    df = pd.read_csv(
-        "data/processed_database.csv"
-    )
+    df = st.session_state["results"]
 
 
     st.subheader(
@@ -119,10 +105,7 @@ if os.path.exists(
     )
 
 
-    # Sort by score
-
     if "Quality Score" in df.columns:
-
 
         df = df.sort_values(
             "Quality Score",
@@ -131,9 +114,7 @@ if os.path.exists(
 
 
 
-    # Display columns
-
-    display_columns = [
+    columns = [
 
         "Symbol",
         "Market Cap (Cr)",
@@ -146,42 +127,30 @@ if os.path.exists(
     ]
 
 
-    available_columns = [
-
-        c for c in display_columns
+    columns = [
+        c for c in columns
         if c in df.columns
-
     ]
 
 
     st.dataframe(
-        df[available_columns],
+        df[columns],
         use_container_width=True
     )
 
 
-
     st.download_button(
 
-        label="📥 Download Watchlist",
+        "📥 Download CSV",
 
-        data=df.to_csv(
-            index=False
-        ),
+        df.to_csv(index=False),
 
-        file_name=
-        "NSE_10X_Watchlist.csv"
+        "NSE_10X_candidates.csv"
 
     )
 
-
 else:
 
-
     st.info(
-        """
-        No database available.
-
-        Click Run Daily Scan first.
-        """
+        "Click Run Daily Scan"
     )
